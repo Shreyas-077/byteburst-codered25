@@ -10,7 +10,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from io import BytesIO
 
 class ATSResumeBuilder:
-    def _init_(self, api_key: str):
+    def __init__(self, api_key: str):
         """Initialize the resume builder with OpenAI API key."""
         self.api_key = api_key
         openai.api_key = api_key
