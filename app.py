@@ -4,10 +4,19 @@ import random
 from dotenv import load_dotenv
 import base64
 import re
+import plotly.graph_objects as go
+from modules.resume_parser import extract_text_from_pdf
+from modules.pq_calculator import calculate_pq_with_growth, calculate_risk_reward
+from modules.career_growth import CareerGrowthPredictor
+from modules.team_synergy import generate_team_profile, extract_candidate_skills, calculate_synergy_score, team_synergy_analysis
+from modules.growth_map import GrowthMapGenerator
+from modules.resume_builder import ATSResumeBuilder
+from modules.career_coach import CareerCoach
 from datetime import datetime
-import tempfile
 import fitz
-from PIL import Image
+import zipfile
+import pyperclip
+
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +38,6 @@ st.set_page_config(
 api_key = os.getenv("OPENAI_API_KEY")
 if api_key:
     resume_builder = ATSResumeBuilder(api_key)
-    
 else:
     st.error("⚠️ OpenAI API key not found. Please check your .env file.")
     st.stop()
@@ -70,7 +78,7 @@ st.markdown("""
 st.sidebar.title("Navigation")
 selected_page = st.sidebar.selectbox(
     "Choose a feature",
-    ["Home", "Resume Builder", "Resume Analysis", "PDF Viewer & Editor", "Career Coach", "Interview Game", "Learning Playlist","AI Interviewer"]
+    ["Home", "Resume Builder", "Resume Analysis", "PDF Viewer", "Career Coach", "Interview Game", "Learning Playlist"]
 )
 
 # Main content
@@ -103,7 +111,8 @@ if selected_page == "Home":
     """)
 
 elif selected_page == "Resume Builder":
-    st.title("Resume Builder")
+    st.title("🎯 Smart Resume Builder")
+    st.write("Create an ATS-optimized resume that stands out to top tech companies")
     
     # Initialize resume builder with API key from environment variable
     api_key = os.getenv("OPENAI_API_KEY")
@@ -113,266 +122,572 @@ elif selected_page == "Resume Builder":
     
     resume_builder = ATSResumeBuilder(api_key)
     
-    # Initialize session state
-    if 'pdf_content' not in st.session_state:
-        st.session_state.pdf_content = None
-    if 'user_name' not in st.session_state:
-        st.session_state.user_name = None
-    if 'basic_info' not in st.session_state:
-        st.session_state.basic_info = None
-    if 'generation_count' not in st.session_state:
-        st.session_state.generation_count = 0
-    if 'show_ats_score' not in st.session_state:
-        st.session_state.show_ats_score = False
-    if 'form_submitted' not in st.session_state:
-        st.session_state.form_submitted = False
-
-    # Get query parameters
-    query_params = st.experimental_get_query_params()
-    action = query_params.get("action", [None])[0]
-
-    # Handle regeneration from query parameter
-    if action == "regenerate" and st.session_state.basic_info:
-        st.session_state.generation_count += 1
-        basic_info = st.session_state.basic_info
-        basic_info['generation_style'] = {
-            "tone": "professional" if st.session_state.generation_count % 2 == 0 else "modern",
-            "focus": "achievements" if st.session_state.generation_count % 3 == 0 else "skills",
-            "variation": st.session_state.generation_count
-        }
-        
-        with st.spinner("🔄 Regenerating your resume..."):
-            try:
-                pdf_content = resume_builder.generate_resume_from_basic_info(basic_info)
-                st.session_state.pdf_content = pdf_content
-                st.success("✅ Resume regenerated successfully!")
-                # Clear the action parameter
-                query_params.pop("action", None)
-                st.experimental_set_query_params(**query_params)
-            except Exception as e:
-                st.error(f"❌ Error regenerating resume: {str(e)}")
-                st.stop()
-
-    # Form for resume building
-    with st.form("resume_form"):
-        st.subheader("📋 Contact Information")
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Full Name", placeholder="John Doe")
-            email = st.text_input("Email", placeholder="john@example.com")
-            phone = st.text_input("Phone", placeholder="+1 (123) 456-7890")
-        with col2:
-            location = st.text_input("Location", placeholder="City, Country")
-            github = st.text_input("GitHub Profile", placeholder="https://github.com/username")
-            linkedin = st.text_input("LinkedIn Profile", placeholder="https://linkedin.com/in/username")
-        
-        st.subheader("🎓 Education")
-        col1, col2 = st.columns(2)
-        with col1:
-            degree = st.text_input("Degree", placeholder="Bachelor of Technology in Computer Science")
-            university = st.text_input("University", placeholder="Your University Name")
-        with col2:
-            gpa = st.text_input("GPA", placeholder="3.8/4.0")
-            graduation_year = st.text_input("Graduation Year", placeholder="2024")
-        
-        st.subheader("💼 Work Experience")
-        num_experiences = st.number_input("Number of work experiences", min_value=0, max_value=5, value=1)
-        experiences = []
-        
-        for i in range(num_experiences):
-            st.markdown(f"##### Experience {i+1}")
+    # Multi-step form
+    if 'resume_step' not in st.session_state:
+        st.session_state.resume_step = 1
+    
+    # Progress bar
+    total_steps = 7
+    progress = (st.session_state.resume_step - 1) / total_steps
+    st.progress(progress)
+    
+    # Navigation buttons
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.session_state.resume_step > 1:
+            if st.button("⬅️ Previous Step"):
+                st.session_state.resume_step -= 1
+                st.experimental_rerun()
+    
+    with col2:
+        if st.session_state.resume_step < total_steps:
+            if st.button("Next Step ➡️"):
+                st.session_state.resume_step += 1
+                st.experimental_rerun()
+    
+    # Step 1: Basic Information
+    if st.session_state.resume_step == 1:
+        st.subheader("📋 Basic Information")
+        with st.form("basic_info_form"):
             col1, col2 = st.columns(2)
             with col1:
-                company = st.text_input(f"Company Name #{i+1}", key=f"company_{i}")
-                title = st.text_input(f"Job Title #{i+1}", key=f"title_{i}")
+                name = st.text_input("Full Name*", key="name")
+                email = st.text_input("Email*", key="email")
+                phone = st.text_input("Phone Number*", key="phone")
             with col2:
-                start_date = st.text_input(f"Start Date #{i+1}", placeholder="MM/YYYY", key=f"start_{i}")
-                end_date = st.text_input(f"End Date #{i+1}", placeholder="MM/YYYY or Present", key=f"end_{i}")
-            achievements = st.text_area(f"Key Achievements #{i+1}", 
-                placeholder="- Developed feature X that improved Y by Z%\n- Led team of N people\n- Reduced processing time by X%",
-                height=100,
-                key=f"achievements_{i}")
-            experiences.append({
-                "company": company,
-                "title": title,
-                "duration": f"{start_date} - {end_date}",
-                "achievements": [ach.strip() for ach in achievements.split('\n') if ach.strip()]
-            })
-        
-        st.subheader("🛠️ Skills & Expertise")
-        col1, col2 = st.columns(2)
-        with col1:
-            programming_languages = st.text_input("Programming Languages", 
-                placeholder="Python, Java, JavaScript, C++")
-            frameworks = st.text_input("Frameworks & Libraries", 
-                placeholder="React, Django, TensorFlow")
-        with col2:
-            tools = st.text_input("Tools & Platforms", 
-                placeholder="Git, Docker, AWS, Linux")
-            databases = st.text_input("Databases", 
-                placeholder="PostgreSQL, MongoDB, Redis")
-        
-        st.subheader("🎯 Target Job")
-        col1, col2 = st.columns(2)
-        with col1:
-            target_role = st.text_input("Target Role", placeholder="Software Engineer")
-            target_company = st.text_input("Target Company (Optional)", placeholder="Company Name")
-        with col2:
-            job_description = st.text_area("Job Description (Optional)", 
-                placeholder="Paste the job description here for better resume tailoring",
-                height=100)
-        
-        st.subheader("🌟 Additional Information")
-        col1, col2 = st.columns(2)
-        with col1:
-            languages = st.text_input("Languages Known", 
-                placeholder="English (Native), Spanish (Intermediate)")
-            certifications = st.text_area("Certifications", 
-                placeholder="- AWS Certified Developer\n- Google Cloud Professional",
-                height=100)
-        with col2:
-            hobbies = st.text_input("Hobbies & Interests", 
-                placeholder="Open Source Contributing, Tech Blogging")
-            achievements = st.text_area("Additional Achievements", 
-                placeholder="- Won XYZ Hackathon\n- Published paper in ABC",
-                height=100)
-        
-        submitted = st.form_submit_button("Generate Resume", type="primary")
-        if submitted:
-            if not name or not email:
-                st.error("Please fill in at least your name and email.")
-                st.stop()
+                location = st.text_input("Location*", key="location")
+                linkedin = st.text_input("LinkedIn URL", key="linkedin")
+                github = st.text_input("GitHub URL", key="github")
+            
+            portfolio = st.text_input("Portfolio/Personal Website", key="portfolio")
+            blog = st.text_input("Tech Blog URL", key="blog")
+            
+            submitted = st.form_submit_button("Save & Continue")
+            if submitted:
+                if not name or not email or not phone or not location:
+                    st.error("Please fill in all required fields marked with *")
+                else:
+                    st.session_state.basic_info = {
+                        "contact_info": {
+                            "name": name,
+                            "email": email,
+                            "phone": phone,
+                            "location": location
+                        },
+                        "additional_info": {
+                            "linkedin": linkedin,
+                            "github": github,
+                            "portfolio": portfolio,
+                            "blog": blog
+                        }
+                    }
+                    st.session_state.resume_step += 1
+                    st.experimental_rerun()
+    
+    # Step 2: Education
+    elif st.session_state.resume_step == 2:
+        st.subheader("🎓 Education")
+        with st.form("education_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                degree = st.text_input("Degree*", key="degree")
+                major = st.text_input("Major/Field of Study*", key="major")
+            with col2:
+                university = st.text_input("University/Institution*", key="university")
+                graduation_date = st.text_input("Graduation Date*", help="Format: MMM YYYY (e.g., May 2024)")
+            
+            gpa = st.text_input("GPA", key="gpa", help="Leave blank if not applicable")
+            achievements = st.text_area("Academic Achievements", 
+                                     help="List notable academic achievements, honors, or relevant coursework")
+            
+            submitted = st.form_submit_button("Save & Continue")
+            if submitted:
+                if not degree or not major or not university or not graduation_date:
+                    st.error("Please fill in all required fields marked with *")
+                else:
+                    st.session_state.basic_info["education"] = {
+                        "degree": degree,
+                        "major": major,
+                        "university": university,
+                        "graduation_date": graduation_date,
+                        "gpa": gpa if gpa else None,
+                        "achievements": [ach.strip() for ach in achievements.split('\n') if ach.strip()]
+                    }
+                    st.session_state.resume_step += 1
+                    st.experimental_rerun()
+    
+    # Step 3: Skills
+    elif st.session_state.resume_step == 3:
+        st.subheader("🛠️ Skills")
+        with st.form("skills_form"):
+            st.write("Group your skills by category. Add multiple skills separated by commas.")
+            
+            programming = st.text_area("Programming Languages", 
+                                     help="E.g., Python, Java, JavaScript, C++")
+            
+            frameworks = st.text_area("Frameworks & Libraries",
+                                    help="E.g., React, Django, TensorFlow, Spring")
+            
+            databases = st.text_area("Databases & Storage",
+                                   help="E.g., PostgreSQL, MongoDB, Redis")
+            
+            cloud = st.text_area("Cloud & Infrastructure",
+                               help="E.g., AWS, Azure, Docker, Kubernetes")
+            
+            tools = st.text_area("Development Tools",
+                               help="E.g., Git, Jenkins, JIRA, VS Code")
+            
+            soft_skills = st.text_area("Soft Skills",
+                                     help="E.g., Team Leadership, Agile Methodology, Problem Solving")
+            
+            other = st.text_area("Other Technical Skills",
+                               help="Any other relevant technical skills")
+            
+            submitted = st.form_submit_button("Save & Continue")
+            if submitted:
+                def parse_skills(text):
+                    return [skill.strip() for skill in text.split(',') if skill.strip()]
                 
-            st.session_state.user_name = name
-            st.session_state.form_submitted = True
-            
-            # Collect form data into basic_info
-            basic_info = {
-                "contact_info": {
-                    "name": name,
-                    "email": email,
-                    "phone": phone,
-                    "location": location,
-                    "linkedin": linkedin,
-                    "github": github
-                },
-                "education": {
-                    "degree": degree,
-                    "university": university,
-                    "duration": f"Graduating {graduation_year}" if graduation_year else "",
-                    "gpa": gpa
-                },
-                "work_experience": experiences,
-                "skills": {
-                    "programming_languages": [lang.strip() for lang in programming_languages.split(',') if lang.strip()],
-                    "frameworks": [fw.strip() for fw in frameworks.split(',') if fw.strip()],
-                    "tools": [tool.strip() for tool in tools.split(',') if tool.strip()],
-                    "databases": [db.strip() for db in databases.split(',') if db.strip()]
-                },
-                "languages": [lang.strip() for lang in languages.split(',') if lang.strip()],
-                "certifications": [cert.strip() for cert in certifications.split('\n') if cert.strip()],
-                "hobbies": [hobby.strip() for hobby in hobbies.split(',') if hobby.strip()],
-                "achievements": [ach.strip() for ach in achievements.split('\n') if ach.strip()],
-                "target_job": {
-                    "role": target_role,
-                    "company": target_company,
-                    "description": job_description
+                st.session_state.basic_info["skills"] = {
+                    "Programming Languages": parse_skills(programming),
+                    "Frameworks & Libraries": parse_skills(frameworks),
+                    "Databases & Storage": parse_skills(databases),
+                    "Cloud & Infrastructure": parse_skills(cloud),
+                    "Development Tools": parse_skills(tools),
+                    "Soft Skills": parse_skills(soft_skills),
+                    "Other": parse_skills(other)
                 }
-            }
-            st.session_state.basic_info = basic_info
-            
-            with st.spinner("🔄 Generating your ATS-optimized resume..."):
-                try:
-                    pdf_content = resume_builder.generate_resume_from_basic_info(basic_info)
-                    st.session_state.pdf_content = pdf_content
-                    st.success("✅ Resume generated successfully!")
-                except Exception as e:
-                    st.error(f"❌ Error generating resume: {str(e)}")
-                    st.stop()
-
-    # Display resume and actions if we have content
-    if st.session_state.pdf_content:
-        # Show preview section
-        st.subheader("📄 Resume Preview")
-        
-        # Display PDF preview using HTML embed
-        preview_html = f"""
-            <iframe src="data:application/pdf;base64,{base64.b64encode(st.session_state.pdf_content).decode('utf-8')}"
-                    width="100%"
-                    height="800"
-                    style="border: 1px solid #ccc; border-radius: 5px;">
-            </iframe>
-        """
-        st.markdown(preview_html, unsafe_allow_html=True)
-        
-        # Add actions column
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("⚡ Regenerate Resume"):
-                # Set query parameter for regeneration
-                query_params["action"] = "regenerate"
-                st.experimental_set_query_params(**query_params)
+                st.session_state.resume_step += 1
                 st.experimental_rerun()
+    
+    # Step 4: Work Experience
+    elif st.session_state.resume_step == 4:
+        st.subheader("💼 Work Experience")
         
+        if 'work_experiences' not in st.session_state:
+            st.session_state.work_experiences = []
+        
+        with st.form("work_exp_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                title = st.text_input("Job Title*")
+                company = st.text_input("Company Name*")
+            with col2:
+                location = st.text_input("Location*")
+                start_date = st.text_input("Start Date*", help="Format: MMM YYYY")
+                end_date = st.text_input("End Date", help="Format: MMM YYYY or 'Present'")
+            
+            responsibilities = st.text_area("Key Responsibilities*",
+                                         help="List your main responsibilities and duties")
+            
+            achievements = st.text_area("Key Achievements*",
+                                      help="Use STAR method: Situation, Task, Action, Result\n" +
+                                      "Focus on quantifiable achievements and impact")
+            
+            tech_stack = st.text_input("Technologies Used",
+                                     help="List main technologies, tools, and frameworks used")
+            
+            submitted = st.form_submit_button("Add Experience")
+            if submitted:
+                if not title or not company or not location or not start_date or not responsibilities or not achievements:
+                    st.error("Please fill in all required fields marked with *")
+                else:
+                    experience = {
+                        "title": title,
+                        "company": company,
+                        "location": location,
+                        "start_date": start_date,
+                        "end_date": end_date if end_date else "Present",
+                        "responsibilities": [r.strip() for r in responsibilities.split('\n') if r.strip()],
+                        "achievements": [a.strip() for a in achievements.split('\n') if a.strip()],
+                        "technologies": [t.strip() for t in tech_stack.split(',') if t.strip()]
+                    }
+                    st.session_state.work_experiences.append(experience)
+        
+        # Display added experiences
+        if st.session_state.work_experiences:
+            st.write("### Added Experiences")
+            for i, exp in enumerate(st.session_state.work_experiences):
+                with st.expander(f"{exp['title']} at {exp['company']}"):
+                    st.write(f"**Location:** {exp['location']}")
+                    st.write(f"**Period:** {exp['start_date']} - {exp['end_date']}")
+                    st.write("**Responsibilities:**")
+                    for resp in exp['responsibilities']:
+                        st.write(f"- {resp}")
+                    st.write("**Achievements:**")
+                    for ach in exp['achievements']:
+                        st.write(f"- {ach}")
+                    if exp['technologies']:
+                        st.write(f"**Technologies:** {', '.join(exp['technologies'])}")
+                    
+                    if st.button(f"Remove Experience {i+1}"):
+                        st.session_state.work_experiences.pop(i)
+                        st.experimental_rerun()
+        
+        col1, col2 = st.columns([3, 1])
         with col2:
-            st.download_button(
-                label="⬇️ Download Resume (PDF)",
-                data=st.session_state.pdf_content,
-                file_name=f"resume_{st.session_state.user_name if st.session_state.get('user_name') else 'untitled'}.pdf",
-                mime="application/pdf"
-            )
+            if st.session_state.work_experiences and st.button("Continue ➡️"):
+                st.session_state.basic_info["work_experience"] = st.session_state.work_experiences
+                st.session_state.resume_step += 1
+                st.experimental_rerun()
+    
+    # Step 5: Projects
+    elif st.session_state.resume_step == 5:
+        st.subheader("🚀 Technical Projects")
         
-        with col3:
-            if st.button("📋 View ATS Score"):
-                st.session_state.show_ats_score = True
+        if 'projects' not in st.session_state:
+            st.session_state.projects = []
         
-        # Show ATS score if requested
-        if st.session_state.show_ats_score and st.session_state.basic_info:
-            st.subheader("🎯 ATS Optimization Score")
-            ats_score = resume_builder.analyze_ats_score(st.session_state.basic_info)
+        with st.form("project_form"):
+            name = st.text_input("Project Name*")
+            description = st.text_area("Project Description*",
+                                    help="Brief overview of the project's purpose and scope")
             
-            # Display overall score
-            st.metric("Overall Score", f"{ats_score['overall_score']}%")
+            col1, col2 = st.columns(2)
+            with col1:
+                tech_stack = st.text_input("Technologies Used*",
+                                         help="List main technologies separated by commas")
+                role = st.text_input("Your Role",
+                                   help="E.g., Lead Developer, Full Stack Engineer")
+            with col2:
+                github_link = st.text_input("GitHub/Source Code Link")
+                live_link = st.text_input("Live Demo Link")
             
-            # Display section scores
-            st.write("Section Scores:")
-            scores_cols = st.columns(4)
-            for i, (section, score) in enumerate(ats_score['section_scores'].items()):
-                with scores_cols[i]:
-                    st.metric(
-                        label=f"{section.title()}",
-                        value=f"{score}%",
-                        delta=f"{'High' if score > 0.7 else 'Moderate' if score > 0.5 else 'Low'} Synergy"
+            key_features = st.text_area("Key Features*",
+                                      help="List main features and functionalities")
+            
+            challenges = st.text_area("Technical Challenges & Solutions",
+                                    help="Describe key challenges and how you solved them")
+            
+            impact = st.text_area("Impact & Results",
+                                help="Describe the project's impact, metrics, or user feedback")
+            
+            submitted = st.form_submit_button("Add Project")
+            if submitted:
+                if not name or not description or not tech_stack or not key_features:
+                    st.error("Please fill in all required fields marked with *")
+                else:
+                    project = {
+                        "name": name,
+                        "description": description,
+                        "technologies": [t.strip() for t in tech_stack.split(',') if t.strip()],
+                        "role": role,
+                        "github_link": github_link,
+                        "live_link": live_link,
+                        "features": [f.strip() for f in key_features.split('\n') if f.strip()],
+                        "challenges": [c.strip() for c in challenges.split('\n') if c.strip()],
+                        "impact": [i.strip() for i in impact.split('\n') if i.strip()]
+                    }
+                    st.session_state.projects.append(project)
+        
+        # Display added projects
+        if st.session_state.projects:
+            st.write("### Added Projects")
+            for i, proj in enumerate(st.session_state.projects):
+                with st.expander(f"{proj['name']}"):
+                    st.write(f"**Description:** {proj['description']}")
+                    st.write(f"**Technologies:** {', '.join(proj['technologies'])}")
+                    if proj['role']:
+                        st.write(f"**Role:** {proj['role']}")
+                    st.write("**Key Features:**")
+                    for feat in proj['features']:
+                        st.write(f"- {feat}")
+                    if proj['challenges']:
+                        st.write("**Challenges & Solutions:**")
+                        for chal in proj['challenges']:
+                            st.write(f"- {chal}")
+                    if proj['impact']:
+                        st.write("**Impact & Results:**")
+                        for imp in proj['impact']:
+                            st.write(f"- {imp}")
+                    
+                    if st.button(f"Remove Project {i+1}"):
+                        st.session_state.projects.pop(i)
+                        st.experimental_rerun()
+        
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.session_state.projects and st.button("Continue ➡️"):
+                st.session_state.basic_info["projects"] = st.session_state.projects
+                st.session_state.resume_step += 1
+                st.experimental_rerun()
+    
+    # Step 6: Additional Information
+    elif st.session_state.resume_step == 6:
+        st.subheader("✨ Additional Information")
+        with st.form("additional_info_form"):
+            certifications = st.text_area("Certifications",
+                                        help="List relevant certifications with dates")
+            
+            languages = st.text_input("Languages",
+                                    help="List languages and proficiency levels, separated by commas")
+            
+            awards = st.text_area("Awards & Recognition",
+                                help="List any relevant awards or recognition")
+            
+            publications = st.text_area("Publications & Patents",
+                                      help="List any publications, patents, or research work")
+            
+            volunteer = st.text_area("Volunteer Work",
+                                   help="List relevant volunteer experience or community involvement")
+            
+            interests = st.text_area("Professional Interests",
+                                   help="List technical interests, hobbies, or passion projects")
+            
+            submitted = st.form_submit_button("Save & Continue")
+            if submitted:
+                def parse_list(text):
+                    return [item.strip() for item in text.split('\n') if item.strip()]
+                
+                st.session_state.basic_info.update({
+                    "certifications": parse_list(certifications),
+                    "languages": [lang.strip() for lang in languages.split(',') if lang.strip()],
+                    "awards": parse_list(awards),
+                    "publications": parse_list(publications),
+                    "volunteer": parse_list(volunteer),
+                    "hobbies": parse_list(interests)
+                })
+                st.session_state.resume_step += 1
+                st.experimental_rerun()
+    
+    # Step 7: Target Companies & Generate
+    elif st.session_state.resume_step == 7:
+        st.subheader("🎯 Target Companies & Resume Generation")
+        
+        # Initialize resume generation state if not exists
+        if 'resume_generated' not in st.session_state:
+            st.session_state.resume_generated = False
+            st.session_state.current_resume_path = None
+            st.session_state.current_resume_content = None
+        
+        # Company selection form
+        with st.form("generate_form"):
+            st.write("Select target companies to optimize your resume for:")
+            
+            companies = {
+                "FAANG+": ["Amazon", "Apple", "Google", "Meta", "Microsoft", "Netflix"],
+                "Tech Giants": ["IBM", "Oracle", "Intel", "Salesforce", "Adobe"],
+                "Consulting": ["Accenture", "Capgemini", "Deloitte", "TCS", "Infosys"],
+                "Others": ["Twitter", "Uber", "Airbnb", "LinkedIn", "PayPal"]
+            }
+            
+            selected_companies = []
+            for category, company_list in companies.items():
+                st.write(f"**{category}**")
+                cols = st.columns(3)
+                for i, company in enumerate(company_list):
+                    with cols[i % 3]:
+                        if st.checkbox(company, key=f"company_{company}"):
+                            selected_companies.append(company)
+            
+            custom_companies = st.text_input("Add other target companies",
+                                           help="Separate by commas")
+            if custom_companies:
+                selected_companies.extend([c.strip() for c in custom_companies.split(',') if c.strip()])
+            
+            st.write("---")
+            st.write("**Resume Preferences**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                style = st.selectbox("Resume Style",
+                                   ["Modern", "Classic", "Minimal"],
+                                   help="Choose the visual style of your resume")
+            with col2:
+                color = st.selectbox("Color Scheme",
+                                   ["Professional Blue", "Classic Black", "Modern Gray"],
+                                   help="Choose the color scheme for your resume")
+            
+            include_photo = st.checkbox("Include professional photo",
+                                      help="Not recommended for US job applications")
+            
+            if include_photo:
+                photo = st.file_uploader("Upload professional photo", type=['jpg', 'png'])
+            
+            # Additional preferences
+            st.write("**Advanced Options**")
+            col1, col2 = st.columns(2)
+            with col1:
+                emphasis = st.selectbox("Content Emphasis",
+                                      ["Balanced", "Technical Skills", "Leadership", "Innovation"],
+                                      help="Choose what aspects to emphasize in your resume")
+            with col2:
+                length = st.selectbox("Resume Length",
+                                    ["Concise (1 page)", "Detailed (2 pages)"],
+                                    help="Choose your preferred resume length")
+            
+            submitted = st.form_submit_button("Generate Resume")
+        
+        # Handle resume generation outside the form
+        if submitted:
+            if not selected_companies:
+                st.error("Please select at least one target company")
+            else:
+                with st.spinner("🔄 Generating your optimized resume..."):
+                    try:
+                        # Generate resume content
+                        resume_content = resume_builder.generate_universal_tech_resume(
+                            st.session_state.basic_info,
+                            selected_companies
+                        )
+                        
+                        # Generate PDF
+                        output_path = f"output/{st.session_state.basic_info['contact_info']['name'].replace(' ', '_')}_Resume.pdf"
+                        os.makedirs("output", exist_ok=True)
+                        resume_builder.generate_resume_pdf(resume_content, output_path)
+                        
+                        # Store the generated resume info in session state
+                        st.session_state.resume_generated = True
+                        st.session_state.current_resume_path = output_path
+                        st.session_state.current_resume_content = resume_content
+                        
+                        # Show success message
+                        st.success("✅ Resume generated successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"Error generating resume: {str(e)}")
+        
+        # Show preview and actions if resume is generated
+        if st.session_state.resume_generated and st.session_state.current_resume_path:
+            st.write("---")
+            st.subheader("📄 Resume Preview")
+            
+            # Create tabs for different preview sections
+            preview_tab1, preview_tab2, preview_tab3 = st.tabs(["PDF Preview", "Content Overview", "ATS Score"])
+            
+            with preview_tab1:
+                # Display PDF preview using iframe
+                with open(st.session_state.current_resume_path, "rb") as pdf_file:
+                    base64_pdf = base64.b64encode(pdf_file.read()).decode('utf-8')
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+            
+            with preview_tab2:
+                # Show content overview
+                content = st.session_state.current_resume_content
+                
+                with st.expander("📝 Professional Summary", expanded=True):
+                    st.write(content.get('professional_summary', ''))
+                
+                with st.expander("🛠️ Technical Skills"):
+                    for category, skills in content.get('technical_skills', {}).items():
+                        st.write(f"**{category}:**")
+                        st.write(", ".join(skills))
+                
+                with st.expander("💼 Work Experience"):
+                    for exp in content.get('work_experience', []):
+                        st.write(f"**{exp.get('title')} at {exp.get('company')}**")
+                        for achievement in exp.get('achievements', []):
+                            st.write(f"• {achievement}")
+                        st.write("---")
+                
+                with st.expander("🚀 Projects"):
+                    for project in content.get('projects', []):
+                        st.write(f"**{project.get('name')}**")
+                        st.write(project.get('description', ''))
+                        st.write(f"*Technologies:* {', '.join(project.get('technologies', []))}")
+                        for highlight in project.get('highlights', []):
+                            st.write(f"• {highlight}")
+                        st.write("---")
+            
+            with preview_tab3:
+                # Show ATS score and optimization analysis
+                with st.spinner("Analyzing ATS compatibility..."):
+                    ats_score = resume_builder.analyze_ats_score(st.session_state.current_resume_content)
+                    
+                    # Create a gauge chart for the overall score
+                    fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=ats_score['overall_score'],
+                        title={"text": "ATS Score"},
+                        gauge={
+                            'axis': {'range': [0, 100]},
+                            'bar': {'color': "#00b4c4"},
+                            'steps': [
+                                {'range': [0, 60], 'color': "lightgray"},
+                                {'range': [60, 80], 'color': "gray"},
+                                {'range': [80, 100], 'color': "darkgray"}
+                            ],
+                            'threshold': {
+                                'line': {'color': "red", 'width': 4},
+                                'thickness': 0.75,
+                                'value': 80
+                            }
+                        }
+                    ))
+                    fig.update_layout(
+                        height=300,
+                        margin=dict(l=10, r=10, t=40, b=10)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show section scores
+                    st.write("### Section Scores")
+                    cols = st.columns(4)
+                    for i, (section, score) in enumerate(ats_score['section_scores'].items()):
+                        with cols[i]:
+                            st.metric(section.title(), f"{score}%")
+                    
+                    # Show analysis
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("### ✅ Strengths")
+                        for strength in ats_score['strengths']:
+                            st.write(f"• {strength}")
+                    
+                    with col2:
+                        st.write("### 🔄 Improvements")
+                        for improvement in ats_score['improvements']:
+                            st.write(f"• {improvement}")
+                    
+                    st.write("### 🎯 Keyword Suggestions")
+                    st.write(ats_score['keyword_suggestions'])
+            
+            # Action buttons
+            st.write("---")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            
+            with col1:
+                # Download button
+                with open(st.session_state.current_resume_path, "rb") as file:
+                    st.download_button(
+                        label="⬇️ Download Resume",
+                        data=file,
+                        file_name=os.path.basename(st.session_state.current_resume_path),
+                        mime="application/pdf"
                     )
             
-            # Display keyword matches
-            st.write("📊 Keyword Analysis")
-            if isinstance(ats_score['keyword_match'], str) and ats_score['keyword_match'].endswith('%'):
-                match_value = float(ats_score['keyword_match'].strip('%')) / 100
-                st.progress(match_value)
-            st.write(f"Keyword Match: {ats_score['keyword_match']}")
-            
-            # Display strengths and improvements
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("💪 Strengths")
-                for strength in ats_score['strengths']:
-                    st.success(strength)
-            
             with col2:
-                st.write("🔄 Suggested Improvements")
-                for improvement in ats_score['improvements']:
-                    st.info(improvement)
+                # Regenerate button
+                if st.button("🔄 Regenerate Resume"):
+                    st.session_state.resume_generated = False
+                    st.session_state.current_resume_path = None
+                    st.session_state.current_resume_content = None
+                    st.experimental_rerun()
             
-            # Show keyword suggestions
-            st.write("🔑 Keyword Suggestions")
-            st.write("Consider adding these relevant keywords:")
-            keyword_cols = st.columns(3)
-            for i, keyword in enumerate(ats_score['keyword_suggestions']):
-                with keyword_cols[i % 3]:
-                    st.code(keyword)
-
+            with col3:
+                # Show optimization tips in an expander
+                with st.expander("📈 Resume Optimization Tips"):
+                    st.write("""
+                    ### Tips for Success
+                    1. **Customize for Each Application**
+                       - Adjust keywords based on job description
+                       - Highlight relevant projects and skills
+                    
+                    2. **Keep it Concise**
+                       - Limit to 1-2 pages
+                       - Use bullet points for clarity
+                    
+                    3. **Quantify Achievements**
+                       - Use metrics and numbers
+                       - Show impact and results
+                    
+                    4. **Online Presence**
+                       - Keep LinkedIn updated
+                       - Maintain active GitHub
+                       - Build personal portfolio
+                    """)
+    
 elif selected_page == "Resume Analysis":
     st.title("Resume Analysis")
     uploaded_file = st.file_uploader(
@@ -401,15 +716,7 @@ elif selected_page == "Resume Analysis":
             st.session_state.extracted_text = resume_text
             
             # Create tabs for different analyses
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-                "Resume Summary", 
-                "PQ Score", 
-                "Team Synergy", 
-                "Career Growth",
-                "Skills Gap",
-                "Industry Fit",
-                "Interview Prep"
-            ])
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Resume Summary", "PQ Score", "Team Synergy", "Career Growth", "Skills Gap", "Industry Fit"])
             
             # Resume Summary Tab
             with tab1:
@@ -529,6 +836,11 @@ elif selected_page == "Resume Analysis":
                             hovertemplate="Team %{x}<br>Synergy Score: %{y:.0%}<extra></extra>"
                         ))
                         
+                        # Add threshold lines
+                        # fig.add_hline(y=0.7, line_dash="dash", line_color="#00FF00", annotation_text="High Synergy (70%)")
+                        # fig.add_hline(y=0.5, line_dash="dash", line_color="#FFA500", annotation_text="Moderate Synergy (50%)")
+                        
+                        # Update layout
                         fig.update_layout(
                             yaxis=dict(
                                 range=[0, 1],
@@ -695,361 +1007,606 @@ elif selected_page == "Resume Analysis":
                 
                 except Exception as e:
                     st.error(f"Error in career growth analysis: {str(e)}")
-
-            # Skills gap analysis
+            
+            # Skills Gap Tab
             with tab5:
-                st.subheader("Skills Gap Analysis")
+                st.write("### 🎯 Skills Gap Analysis")
                 
-                # Sample skills gap data
-                skills_gap = {
-                    'Cloud Computing': {'Required': 80, 'Current': 60},
-                    'Machine Learning': {'Required': 70, 'Current': 75},
-                    'DevOps': {'Required': 85, 'Current': 65},
-                    'System Design': {'Required': 90, 'Current': 80}
-                }
+                try:
+                    # Get job role for comparison
+                    job_role = st.selectbox(
+                        "Select Target Role",
+                        ["Software Engineer", "Data Scientist", "DevOps Engineer", "Full Stack Developer", "Product Manager"]
+                    )
+                    
+                    # Display skills comparison
+                    st.write("### Skills Comparison")
+                    
+                    # Create two columns for current vs required skills
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("#### 💪 Your Current Skills")
+                        current_skills = extracted_details['Skills']
+                        for skill in current_skills:
+                            if skill != "Not Found":
+                                st.markdown(f"""
+                                    <div style='padding: 10px; border-radius: 5px; margin: 5px 0; 
+                                    background-color: #1E1E1E; border-left: 5px solid #00b4c4'>
+                                        {skill}
+                                    </div>
+                                """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        st.write("#### 🎯 Required Skills")
+                        # Example required skills based on role
+                        required_skills = {
+                            "Software Engineer": ["Python", "Java", "System Design", "Data Structures", "Algorithms"],
+                            "Data Scientist": ["Python", "Machine Learning", "Statistics", "SQL", "Data Visualization"],
+                            "DevOps Engineer": ["Docker", "Kubernetes", "CI/CD", "Cloud Platforms", "Shell Scripting"],
+                            "Full Stack Developer": ["JavaScript", "React", "Node.js", "MongoDB", "REST APIs"],
+                            "Product Manager": ["Agile", "Product Strategy", "User Research", "Analytics", "Roadmapping"]
+                        }
+                        
+                        for skill in required_skills[job_role]:
+                            status = "✅" if skill in current_skills else "❌"
+                            st.markdown(f"""
+                                <div style='padding: 10px; border-radius: 5px; margin: 5px 0; 
+                                background-color: #1E1E1E; border-left: 5px solid {"#00b4c4" if skill in current_skills else "#FF4B4B"}'>
+                                    {status} {skill}
+                                </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Skills Gap Summary
+                    st.write("### 📊 Gap Analysis Summary")
+                    missing_skills = [skill for skill in required_skills[job_role] if skill not in current_skills]
+                    match_percentage = (len(required_skills[job_role]) - len(missing_skills)) / len(required_skills[job_role]) * 100
+                    
+                    # Display match percentage
+                    st.metric("Skills Match", f"{match_percentage:.0f}%")
+                    
+                    if missing_skills:
+                        st.write("#### 🎯 Skills to Acquire")
+                        for skill in missing_skills:
+                            st.markdown(f"""
+                                <div style='padding: 10px; border-radius: 5px; margin: 5px 0; 
+                                background-color: #1E1E1E; border-left: 5px solid #FFA500'>
+                                    • {skill}
+                                </div>
+                            """, unsafe_allow_html=True)
                 
-                for skill, scores in skills_gap.items():
-                    st.write(f"**{skill}**")
-                    cols = st.columns([3, 1])
-                    with cols[0]:
-                        # Ensure progress value is between 0 and 1
-                        progress = min(scores['Current'] / scores['Required'], 1.0)
-                        st.progress(progress)
-                    with cols[1]:
-                        st.write(f"{scores['Current']}/{scores['Required']}")
-
+                except Exception as e:
+                    st.error(f"Error in skills gap analysis: {str(e)}")
+            
             # Industry Fit Tab
             with tab6:
-                st.subheader("Industry Fit Analysis")
+                st.write("### 🎯 Industry Fit Analysis")
                 
-                # Industry selection
-                industry = st.selectbox(
-                    "Select Target Industry",
-                    ["Technology", "Finance", "Healthcare", "E-commerce", "Manufacturing"]
-                )
-                
-                # Create columns for different metrics
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Industry alignment chart
-                    st.subheader("Industry Alignment")
-                    
-                    alignment_data = {
-                        'Domain Knowledge': 85,
-                        'Industry Tools': 75,
-                        'Best Practices': 90,
-                        'Industry Standards': 80
-                    }
-                    
-                    fig = go.Figure(data=[
-                        go.Bar(
-                            x=list(alignment_data.keys()),
-                            y=list(alignment_data.values()),
-                            marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-                        )
-                    ])
-                    
-                    fig.update_layout(
-                        yaxis_range=[0, 100],
-                        height=400
-                    )
-                    
-                    st.plotly_chart(fig)
-                
-                with col2:
-                    # Industry trends matching
-                    st.subheader("Industry Trends Match")
-                    
-                    trends = {
-                        'AI/ML Integration': 90,
-                        'Cloud Migration': 85,
-                        'Agile Practices': 95,
-                        'Security Compliance': 80
-                    }
-                    
-                    for trend, score in trends.items():
-                        st.metric(
-                            label=trend,
-                            value=f"{score}%",
-                            delta="Aligned" if score >= 85 else "Gap"
-                        )
-            
-            # Interview Prep Tab
-            with tab7:
-                st.subheader("Interview Preparation Guide")
-                
-                sections = st.tabs([
-                    "Technical Questions",
-                    "Behavioral Questions",
-                    "Project Discussion",
-                    "Culture Fit"
-                ])
-                
-                with sections[0]:
-                    st.subheader("Recommended Technical Questions")
-                    
-                    questions = [
-                        "Explain your experience with cloud technologies",
-                        "Describe a challenging technical problem you solved",
-                        "How do you approach system design?",
-                        "What's your experience with agile methodologies?"
-                    ]
-                    
-                    for i, q in enumerate(questions, 1):
-                        with st.expander(f"Question {i}: {q}"):
-                            st.write("**Suggested Approach:**")
-                            st.write("1. Start with a high-level overview")
-                            st.write("2. Provide specific examples from your experience")
-                            st.write("3. Highlight the outcomes and learnings")
-                            st.write("4. Connect it to the role requirements")
-                
-                with sections[1]:
-                    st.subheader("Behavioral Questions Preparation")
-                    
-                    scenarios = {
-                        "Leadership": "Describe a time when you led a team through a difficult project",
-                        "Conflict Resolution": "Tell me about a time you handled a disagreement with a colleague",
-                        "Problem Solving": "Share an example of how you solved a complex business problem",
-                        "Initiative": "Describe a situation where you went above and beyond"
-                    }
-                    
-                    for category, question in scenarios.items():
-                        with st.expander(category):
-                            st.write(f"**Question:** {question}")
-                            st.write("**STAR Method Approach:**")
-                            st.write("- **Situation:** Set the context")
-                            st.write("- **Task:** Describe your responsibility")
-                            st.write("- **Action:** Explain what you did")
-                            st.write("- **Result:** Share the outcome")
-                
-                with sections[2]:
-                    st.subheader("Project Discussion Guide")
-                    
-                    projects = [
-                        "Project 1: E-commerce Platform",
-                        "Project 2: Data Analytics Dashboard",
-                        "Project 3: Mobile App Development"
-                    ]
-                    
-                    for project in projects:
-                        with st.expander(project):
-                            st.write("**Key Talking Points:**")
-                            st.write("1. Technical challenges and solutions")
-                            st.write("2. Your specific role and contributions")
-                            st.write("3. Impact and results")
-                            st.write("4. Technologies used")
-                            st.write("5. Team collaboration aspects")
-                
-                with sections[3]:
-                    st.subheader("Culture Fit Preparation")
-                    
-                    st.write("**Company Values Alignment:**")
-                    values = {
-                        "Innovation": 90,
-                        "Teamwork": 85,
-                        "Customer Focus": 95,
-                        "Continuous Learning": 88
-                    }
-                    
-                    for value, score in values.items():
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.progress(score/100)
-                        with col2:
-                            st.write(f"{value}: {score}%")
-
-elif selected_page == "PDF Viewer & Editor":
-    st.title("📄 PDF Viewer & Editor")
-    
-    # File upload
-    uploaded_file = st.file_uploader("Upload a PDF file", type=['pdf'])
-    
-    if uploaded_file is not None:
-        try:
-            # Create a bytes buffer from the uploaded file
-            pdf_bytes = uploaded_file.getvalue()
-            
-            # Open PDF directly from memory using BytesIO
-            pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
-            total_pages = len(pdf_document)
-            
-            # Sidebar for navigation and tools
-            with st.sidebar:
-                st.subheader("📑 Navigation & Tools")
-                
-                # Page navigation
-                page_number = st.number_input(
-                    "Go to page",
-                    min_value=1,
-                    max_value=total_pages,
-                    value=1
-                )
-                
-                # Editing tools
-                st.subheader("🛠️ Editing Tools")
-                
-                tool_options = st.radio(
-                    "Select Tool",
-                    ["Text Edit", "Highlight", "Add Note", "Draw", "Erase"]
-                )
-                
-                if tool_options == "Text Edit":
-                    text_color = st.color_picker("Text Color", "#000000")
-                    font_size = st.slider("Font Size", 8, 72, 12)
-                
-                elif tool_options == "Highlight":
-                    highlight_color = st.color_picker("Highlight Color", "#FFFF00")
-                    opacity = st.slider("Opacity", 0.1, 1.0, 0.5)
-                
-                elif tool_options == "Draw":
-                    draw_color = st.color_picker("Draw Color", "#000000")
-                    line_width = st.slider("Line Width", 1, 10, 2)
-                
-                # Save changes button
-                if st.button("💾 Save Changes"):
-                    try:
-                        # Create output directory if it doesn't exist
-                        os.makedirs("output", exist_ok=True)
-                        
-                        # Save the modified PDF
-                        save_path = os.path.join("output", f"modified_{uploaded_file.name}")
-                        pdf_document.save(save_path)
-                        
-                        # Provide download link
-                        with open(save_path, "rb") as file:
-                            st.download_button(
-                                label="⬇️ Download Modified PDF",
-                                data=file,
-                                file_name=f"modified_{uploaded_file.name}",
-                                mime="application/pdf"
-                            )
-                        st.success("Changes saved successfully!")
-                    except Exception as e:
-                        st.error(f"Error saving changes: {str(e)}")
-            
-            # Main content area
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
                 try:
-                    # PDF Viewer
-                    st.subheader("📄 PDF View")
-                    page = pdf_document[page_number - 1]
-                    
-                    # Convert page to image with higher DPI for better quality
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
-                    
-                    # Convert pixmap to PIL Image
-                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    
-                    # Display the page
-                    st.image(img, use_column_width=True)
-                except Exception as e:
-                    st.error(f"Error displaying page: {str(e)}")
-            
-            with col2:
-                # Editing Panel
-                st.subheader("✏️ Edit Panel")
-                
-                if tool_options == "Text Edit":
-                    # Text editing
-                    text_content = st.text_area("Enter text to add", height=100)
-                    text_position = st.selectbox(
-                        "Text Position",
-                        ["Top Left", "Top Center", "Top Right", "Center", "Bottom Left", "Bottom Center", "Bottom Right"]
+                    # Industry selection
+                    industry = st.selectbox(
+                        "Select Target Industry",
+                        ["Technology", "Finance", "Healthcare", "E-commerce", "Consulting"]
                     )
                     
-                    # Define position mapping
-                    position_mapping = {
-                        "Top Left": (50, 50),
-                        "Top Center": (page.rect.width/2, 50),
-                        "Top Right": (page.rect.width-50, 50),
-                        "Center": (page.rect.width/2, page.rect.height/2),
-                        "Bottom Left": (50, page.rect.height-50),
-                        "Bottom Center": (page.rect.width/2, page.rect.height-50),
-                        "Bottom Right": (page.rect.width-50, page.rect.height-50)
+                    # Industry fit metrics
+                    st.write("### 📊 Industry Alignment")
+                    
+                    # Calculate industry alignment scores (example metrics)
+                    metrics = {
+                        "Technology": {
+                            "Technical Skills": 85,
+                            "Industry Knowledge": 75,
+                            "Innovation Focus": 80,
+                            "Scalability Experience": 70
+                        },
+                        "Finance": {
+                            "Technical Skills": 70,
+                            "Industry Knowledge": 60,
+                            "Security Focus": 75,
+                            "Regulatory Awareness": 65
+                        },
+                        "Healthcare": {
+                            "Technical Skills": 75,
+                            "Industry Knowledge": 55,
+                            "Compliance Understanding": 60,
+                            "Data Privacy": 80
+                        },
+                        "E-commerce": {
+                            "Technical Skills": 80,
+                            "Industry Knowledge": 70,
+                            "User Experience": 85,
+                            "Scalability": 75
+                        },
+                        "Consulting": {
+                            "Technical Skills": 75,
+                            "Industry Knowledge": 65,
+                            "Client Communication": 80,
+                            "Problem Solving": 85
+                        }
                     }
                     
+                    # Display metrics in a 2x2 grid
+                    col1, col2 = st.columns(2)
+                    metrics_list = list(metrics[industry].items())
+                    
+                    for i, (metric, score) in enumerate(metrics_list):
+                        with col1 if i < 2 else col2:
+                            st.metric(metric, f"{score}%")
+                    
+                    # Overall fit score
+                    overall_score = sum(metrics[industry].values()) / len(metrics[industry])
+                    st.metric("Overall Industry Fit", f"{overall_score:.0f}%")
+                    
+                    # Industry-specific recommendations
+                    st.write("### 💡 Industry-Specific Recommendations")
+                    recommendations = {
+                        "Technology": [
+                            "Focus on latest tech trends",
+                            "Build open-source contributions",
+                            "Participate in tech communities"
+                        ],
+                        "Finance": [
+                            "Learn financial domain",
+                            "Study security protocols",
+                            "Understand regulatory frameworks"
+                        ],
+                        "Healthcare": [
+                            "Study HIPAA compliance",
+                            "Learn healthcare systems",
+                            "Focus on data privacy"
+                        ],
+                        "E-commerce": [
+                            "Study scalable architectures",
+                            "Learn about user experience",
+                            "Understand payment systems"
+                        ],
+                        "Consulting": [
+                            "Develop presentation skills",
+                            "Build domain expertise",
+                            "Practice problem-solving"
+                        ]
+                    }
+                    
+                    for rec in recommendations[industry]:
+                        st.markdown(f"""
+                            <div style='padding: 10px; border-radius: 5px; margin: 5px 0; 
+                            background-color: #1E1E1E; border-left: 5px solid #00b4c4'>
+                                • {rec}
+                            </div>
+                        """, unsafe_allow_html=True)
+                
+                except Exception as e:
+                    st.error(f"Error in industry fit analysis: {str(e)}")
+
+elif selected_page == "PDF Viewer":
+    st.title("PDF Viewer & Editor")
+    
+    # Initialize session state for PDF editing
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 0
+    if 'pdf_text' not in st.session_state:
+        st.session_state.pdf_text = {}
+    if 'edited_pages' not in st.session_state:
+        st.session_state.edited_pages = set()
+    
+    uploaded_file = st.file_uploader(
+        label="Upload your PDF",
+        type="pdf"
+    )
+    
+    if uploaded_file:
+        # Create data directory if it doesn't exist
+        os.makedirs("data", exist_ok=True)
+        
+        # Save the file
+        file_path = os.path.join("data", uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        # Store the file path in session state
+        st.session_state.pdf_path = file_path
+        
+        # Create columns for the layout
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.write("### PDF Preview")
+            # Display PDF preview
+            with open(file_path, "rb") as pdf_file:
+                base64_pdf = base64.b64encode(pdf_file.read()).decode('utf-8')
+                pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+                st.markdown(pdf_display, unsafe_allow_html=True)
+        
+        with col2:
+            st.write("### PDF Tools")
+            
+            # PDF Information
+            try:
+                pdf = fitz.open(file_path)
+                st.write(f"📄 Total Pages: {len(pdf)}")
+                
+                # Page Navigation
+                st.write("#### Navigate Pages")
+                col_prev, col_curr, col_next = st.columns([1, 2, 1])
+                with col_prev:
+                    if st.button("◀️ Previous"):
+                        st.session_state.current_page = max(0, st.session_state.current_page - 1)
+                with col_curr:
+                    st.session_state.current_page = st.number_input(
+                        "Page", min_value=0, max_value=len(pdf)-1, 
+                        value=st.session_state.current_page
+                    )
+                with col_next:
+                    if st.button("Next ▶️"):
+                        st.session_state.current_page = min(len(pdf)-1, st.session_state.current_page + 1)
+                
+                # PDF Operations
+                st.write("#### Edit Operations")
+                operation = st.selectbox(
+                    "Select Operation",
+                    ["Extract Text", "Add Text", "Add Image", "Rotate Page", "Delete Page"]
+                )
+                
+                if operation == "Extract Text":
+                    page = pdf[st.session_state.current_page]
+                    text = page.get_text()
+                    st.text_area("Extracted Text", text, height=200)
+                    if st.button("Copy Text"):
+                        st.write("Text copied to clipboard!")
+                        pyperclip.copy(text)
+                
+                elif operation == "Add Text":
+                    text_to_add = st.text_input("Enter text to add")
+                    x = st.slider("X Position", 0, 600, 100)
+                    y = st.slider("Y Position", 0, 800, 100)
+                    font_size = st.slider("Font Size", 8, 72, 12)
                     if st.button("Add Text"):
                         try:
-                            # Get position coordinates
-                            pos = position_mapping[text_position]
-                            
-                            # Add text to PDF
-                            page.insert_text(
-                                point=pos,
-                                text=text_content,
-                                fontsize=font_size,
-                                color=fitz.utils.getColor(text_color)
-                            )
-                            st.success("Text added!")
+                            page = pdf[st.session_state.current_page]
+                            page.insert_text((x, y), text_to_add, fontsize=font_size)
+                            pdf.save(file_path)
+                            st.success("Text added successfully!")
+                            st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Error adding text: {str(e)}")
                 
-                elif tool_options == "Highlight":
-                    st.info("Click and drag on the PDF to highlight text")
-                    # Add highlight functionality
-                    
-                elif tool_options == "Add Note":
-                    note_text = st.text_area("Note content", height=100)
-                    note_position = st.selectbox(
-                        "Note Position",
-                        ["Top Left", "Top Right", "Bottom Left", "Bottom Right"]
+                elif operation == "Add Image":
+                    uploaded_image = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
+                    if uploaded_image:
+                        image_path = os.path.join("data", uploaded_image.name)
+                        with open(image_path, "wb") as f:
+                            f.write(uploaded_image.getbuffer())
+                        
+                        x = st.slider("X Position", 0, 600, 100)
+                        y = st.slider("Y Position", 0, 800, 100)
+                        width = st.slider("Width", 50, 500, 200)
+                        height = st.slider("Height", 50, 500, 200)
+                        
+                        if st.button("Add Image"):
+                            try:
+                                page = pdf[st.session_state.current_page]
+                                page.insert_image(
+                                    rect=(x, y, x+width, y+height),
+                                    filename=image_path
+                                )
+                                pdf.save(file_path)
+                                st.success("Image added successfully!")
+                                st.experimental_rerun()
+                            except Exception as e:
+                                st.error(f"Error adding image: {str(e)}")
+                
+                elif operation == "Rotate Page":
+                    rotation = st.selectbox(
+                        "Select Rotation",
+                        [0, 90, 180, 270]
                     )
-                    
-                    # Define position mapping for notes
-                    note_position_mapping = {
-                        "Top Left": (50, 50),
-                        "Top Right": (page.rect.width-50, 50),
-                        "Bottom Left": (50, page.rect.height-50),
-                        "Bottom Right": (page.rect.width-50, page.rect.height-50)
-                    }
-                    
-                    if st.button("Add Note"):
+                    if st.button("Rotate"):
                         try:
-                            # Get position coordinates
-                            pos = note_position_mapping[note_position]
+                            page = pdf[st.session_state.current_page]
+                            page.set_rotation(rotation)
+                            pdf.save(file_path)
+                            st.success("Page rotated successfully!")
+                            st.experimental_rerun()
+                        except Exception as e:
+                            st.error(f"Error rotating page: {str(e)}")
+                
+                elif operation == "Delete Page":
+                    if st.button("Delete Current Page"):
+                        if len(pdf) > 1:
+                            try:
+                                pdf.delete_page(st.session_state.current_page)
+                                pdf.save(file_path)
+                                st.session_state.current_page = max(0, st.session_state.current_page - 1)
+                                st.success("Page deleted successfully!")
+                                st.experimental_rerun()
+                            except Exception as e:
+                                st.error(f"Error deleting page: {str(e)}")
+                        else:
+                            st.error("Cannot delete the last page!")
+                
+                # Export Options
+                st.write("#### Export Options")
+                export_format = st.selectbox(
+                    "Export Format",
+                    ["PDF", "Images"]
+                )
+                
+                if export_format == "PDF":
+                    if st.button("Export Edited PDF"):
+                        try:
+                            export_path = os.path.join("data", f"edited_{uploaded_file.name}")
+                            pdf.save(export_path)
+                            with open(export_path, "rb") as f:
+                                st.download_button(
+                                    label="📥 Download Edited PDF",
+                                    data=f,
+                                    file_name=f"edited_{uploaded_file.name}",
+                                    mime="application/pdf"
+                                )
+                        except Exception as e:
+                            st.error(f"Error exporting PDF: {str(e)}")
+                
+                elif export_format == "Images":
+                    if st.button("Export Pages as Images"):
+                        try:
+                            # Create a ZIP file containing all pages as images
+                            zip_path = os.path.join("data", f"{uploaded_file.name}_images.zip")
+                            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                                for i in range(len(pdf)):
+                                    page = pdf[i]
+                                    pix = page.get_pixmap()
+                                    img_path = os.path.join("data", f"page_{i+1}.png")
+                                    pix.save(img_path)
+                                    zipf.write(img_path, f"page_{i+1}.png")
+                                    os.remove(img_path)
                             
-                            # Add note annotation
-                            annot = page.add_text_annot(
-                                point=pos,
-                                text=note_text
-                            )
-                            # Set annotation properties
-                            annot.set_colors(stroke=(1, 1, 0))  # Yellow border
-                            annot.update()
-                            st.success("Note added!")
+                            with open(zip_path, "rb") as f:
+                                st.download_button(
+                                    label="📥 Download Pages as Images",
+                                    data=f,
+                                    file_name=f"{uploaded_file.name}_images.zip",
+                                    mime="application/zip"
+                                )
                         except Exception as e:
-                            st.error(f"Error adding note: {str(e)}")
+                            st.error(f"Error exporting images: {str(e)}")
                 
-                elif tool_options == "Draw":
-                    st.info("Drawing functionality will be added in the next update")
-                
-                elif tool_options == "Erase":
-                    st.info("Eraser functionality will be added in the next update")
-                
-                # Metadata Editor
-                with st.expander("📝 Edit Metadata"):
-                    metadata = pdf_document.metadata
-                    new_title = st.text_input("Title", metadata.get("title", ""))
-                    new_author = st.text_input("Author", metadata.get("author", ""))
-                    new_subject = st.text_input("Subject", metadata.get("subject", ""))
-                    
-                    if st.button("Update Metadata"):
-                        try:
-                            pdf_document.set_metadata({
-                                "title": new_title,
-                                "author": new_author,
-                                "subject": new_subject
-                            })
-                            st.success("Metadata updated!")
-                        except Exception as e:
-                            st.error(f"Error updating metadata: {str(e)}")
+                pdf.close()
             
-            # Close the PDF document
-            pdf_document.close()
-            
-        except Exception as e:
-            st.error(f"Error processing PDF: {str(e)}")
+            except Exception as e:
+                st.error(f"Error processing PDF: {str(e)}")
+    
+    elif st.session_state.pdf_path and os.path.exists(st.session_state.pdf_path):
+        # Display previously uploaded PDF (same code as above)
+        with open(st.session_state.pdf_path, "rb") as pdf_file:
+            base64_pdf = base64.b64encode(pdf_file.read()).decode('utf-8')
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+    else:
+        st.info("Please upload a PDF file to view and edit it here.")
 
+elif selected_page == "Career Coach":
+    st.title("👨‍🏫 Personal Career Coach")
+    
+    # Initialize user profile if not exists
+    if 'user_profile' not in st.session_state:
+        st.session_state.user_profile = {
+            'job_role': '',
+            'goals': [],
+            'achievements': [],
+            'improvement_areas': [],
+            'skills': [],
+            'skill_level': 'Beginner',
+            'available_time': 5,
+            'experience_level': 'Beginner',
+            'preferences': {},
+            'completed_games': 0,
+            'total_score': 0
+        }
+    
+    # Ensure all required fields exist
+    required_fields = {
+        'job_role': '',
+        'goals': [],
+        'achievements': [],
+        'improvement_areas': [],
+        'skills': [],
+        'skill_level': 'Beginner',
+        'available_time': 5,
+        'experience_level': 'Beginner',
+        'preferences': {},
+        'completed_games': 0,
+        'total_score': 0
+    }
+    
+    # Add any missing fields with default values
+    for field, default_value in required_fields.items():
+        if field not in st.session_state.user_profile:
+            st.session_state.user_profile[field] = default_value
+    
+    # Profile Setup
+    with st.expander("🎯 Your Profile", expanded='user_profile' not in st.session_state):
+        st.session_state.user_profile['job_role'] = st.text_input(
+            "What's your target job role?",
+            value=st.session_state.user_profile.get('job_role', '')
+        )
+        
+        goals = st.text_area(
+            "What are your career goals? (One per line)",
+            value='\n'.join(st.session_state.user_profile.get('goals', []))
+        )
+        st.session_state.user_profile['goals'] = [g.strip() for g in goals.split('\n') if g.strip()]
+        
+        achievements = st.text_area(
+            "Recent achievements? (One per line)",
+            value='\n'.join(st.session_state.user_profile.get('achievements', []))
+        )
+        st.session_state.user_profile['achievements'] = [a.strip() for a in achievements.split('\n') if a.strip()]
+        
+        improvements = st.text_area(
+            "Areas you want to improve? (One per line)",
+            value='\n'.join(st.session_state.user_profile.get('improvement_areas', []))
+        )
+        st.session_state.user_profile['improvement_areas'] = [i.strip() for i in improvements.split('\n') if i.strip()]
+        
+        skills = st.text_area(
+            "Your current skills? (One per line)",
+            value='\n'.join(st.session_state.user_profile.get('skills', []))
+        )
+        st.session_state.user_profile['skills'] = [s.strip() for s in skills.split('\n') if s.strip()]
+        
+        st.session_state.user_profile['skill_level'] = st.select_slider(
+            "Your overall skill level:",
+            options=['Beginner', 'Intermediate', 'Advanced', 'Expert'],
+            value=st.session_state.user_profile.get('skill_level', 'Beginner')
+        )
+        
+        st.session_state.user_profile['available_time'] = st.slider(
+            "Hours available per week for skill development:",
+            min_value=1,
+            max_value=40,
+            value=st.session_state.user_profile.get('available_time', 5)
+        )
+    
+    if st.session_state.user_profile['job_role']:
+        # Daily Motivation
+        st.subheader("🌟 Daily Motivation")
+        if st.button("Get Today's Motivation"):
+            with st.spinner("Generating your daily motivation..."):
+                motivation = CareerCoach.generate_daily_motivation(st.session_state.user_profile)
+                if motivation:
+                    st.info(motivation['message'])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Today's Focus:**", motivation['focus_area'])
+                        st.write("**Quick Tip:**", motivation['quick_tip'])
+                    with col2:
+                        st.write("**Inspiring Quote:**", motivation['quote'])
+                        st.write("**Action Item:**", motivation['action_item'])
+        
+        # Weekly Challenge
+        st.subheader("💪 Weekly Skill Challenge")
+        if st.button("Get This Week's Challenge"):
+            with st.spinner("Creating your weekly challenge..."):
+                challenge = CareerCoach.generate_weekly_challenge(st.session_state.user_profile)
+                if challenge:
+                    st.success(f"**{challenge['challenge_name']}**")
+                    st.write(challenge['description'])
+                    
+                    st.write("**Daily Tasks:**")
+                    for task in challenge['daily_tasks']:
+                        with st.expander(f"📅 {task['day']}"):
+                            st.write(f"**Task:** {task['task']}")
+                            st.write(f"**Time Required:** {task['time_required']}")
+                            st.write(f"**Resources:** {task['resources']}")
+                    
+                    st.write("**Success Criteria:**", challenge['success_criteria'])
+                    st.write("**Bonus Challenge:**", challenge['bonus_challenge'])
+                    st.write("**Expected Outcome:**", challenge['expected_outcome'])
+        
+        # Monthly Review
+        st.subheader("📊 Monthly Progress Review")
+        if st.button("Generate Monthly Review"):
+            # Simulate monthly data (in real app, this would come from user's activity)
+            monthly_data = {
+                'completed_challenges': ['Python Mastery', 'Communication Skills', 'Project Management'],
+                'achievements': ['Completed 5 projects', 'Learned 3 new technologies'],
+                'skills_improved': ['Python', 'Communication', 'Leadership'],
+                'time_invested': 45
+            }
+            
+            with st.spinner("Analyzing your monthly progress..."):
+                review = CareerCoach.generate_monthly_review(st.session_state.user_profile, monthly_data)
+                if review:
+                    st.write("**Overall Summary:**", review['summary'])
+                    
+                    st.write("**Key Achievements:**")
+                    for achievement in review['key_achievements']:
+                        st.write(f"✅ {achievement}")
+                    
+                    st.write("**Areas of Growth:**")
+                    for area in review['areas_of_growth']:
+                        with st.expander(f"📈 {area['skill']}"):
+                            st.write(f"**Progress:** {area['progress']}")
+                            st.write(f"**Next Steps:** {area['next_steps']}")
+                    
+                    st.write("**Insights:**")
+                    for insight in review['insights']:
+                        st.write(f"💡 {insight}")
+                    
+                    st.write("**Next Month Focus:**")
+                    st.write(f"**Primary Goal:** {review['next_month_focus']['primary_goal']}")
+                    st.write("**Action Items:**")
+                    for item in review['next_month_focus']['action_items']:
+                        st.write(f"👉 {item}")
+        
+        # Action Plan
+        st.subheader("📋 Custom Action Plan")
+        if st.button("Create Action Plan"):
+            with st.spinner("Creating your personalized action plan..."):
+                plan = CareerCoach.generate_action_plan(
+                    st.session_state.user_profile,
+                    st.session_state.user_profile['goals']
+                )
+                if plan:
+                    st.write(f"**{plan['plan_name']}**")
+                    st.write(plan['overview'])
+                    
+                    st.write("**Milestones:**")
+                    for milestone in plan['milestones']:
+                        with st.expander(f"🎯 {milestone['name']} ({milestone['timeframe']})"):
+                            for task in milestone['tasks']:
+                                st.write(f"**Task:** {task['task']}")
+                                st.write(f"**Priority:** {task['priority']}")
+                                st.write(f"**Resources:** {task['resources']}")
+                                st.write(f"**Success Criteria:** {task['success_criteria']}")
+                    
+                    st.write("**Success Metrics:**")
+                    for metric in plan['success_metrics']:
+                        st.write(f"📊 {metric}")
+                    
+                    st.write("**Potential Challenges & Solutions:**")
+                    for challenge in plan['potential_challenges']:
+                        with st.expander(f"🚧 {challenge['challenge']}"):
+                            st.write(f"**Solution:** {challenge['solution']}")
+        
+        # Progress Feedback
+        st.subheader("📝 Progress Feedback")
+        if st.button("Get Progress Feedback"):
+            # Simulate progress data (in real app, this would come from user's activity)
+            progress_data = {
+                'recent_progress': ['Completed Python course', 'Started team project'],
+                'completed_tasks': ['Task 1', 'Task 2', 'Task 3'],
+                'challenges': ['Time management', 'Technical complexity'],
+                'time_spent': 20
+            }
+            
+            with st.spinner("Analyzing your progress..."):
+                feedback = CareerCoach.generate_progress_feedback(st.session_state.user_profile, progress_data)
+                if feedback:
+                    st.write("**Overall Assessment:**", feedback['overall_assessment'])
+                    
+                    st.write("**Key Observations:**")
+                    for obs in feedback['key_observations']:
+                        with st.expander(f"👀 {obs['observation']}"):
+                            st.write(f"**Impact:** {obs['impact']}")
+                            st.write(f"**Recommendation:** {obs['recommendation']}")
+                    
+                    st.write("**Strengths:**")
+                    for strength in feedback['strengths']:
+                        with st.expander(f"💪 {strength['strength']}"):
+                            st.write(f"**How to Leverage:** {strength['how_to_leverage']}")
+                    
+                    st.write("**Areas to Improve:**")
+                    for area in feedback['improvement_areas']:
+                        with st.expander(f"📈 {area['area']}"):
+                            st.write(f"**Why Important:** {area['why_important']}")
+                            st.write(f"**How to Improve:** {area['how_to_improve']}")
+                    
+                    st.write("**Next Steps:**")
+                    for step in feedback['next_steps']:
+                        st.write(f"👉 {step}")
+                    
+                    st.info(feedback['motivation'])
+    else:
+        st.info("👆 Please set up your profile to get started with your personal career coach!")
