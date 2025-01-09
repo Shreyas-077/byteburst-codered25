@@ -11,12 +11,13 @@ from modules.career_growth import CareerGrowthPredictor
 from modules.team_synergy import generate_team_profile, extract_candidate_skills, calculate_synergy_score, team_synergy_analysis
 from modules.growth_map import GrowthMapGenerator
 from modules.resume_builder import ATSResumeBuilder
+from modules.game_generator import GameGenerator
 from modules.career_coach import CareerCoach
+from modules.interview_game import InterviewGame
 from datetime import datetime
 import fitz
 import zipfile
 import pyperclip
-
 
 # Load environment variables
 load_dotenv()
@@ -38,6 +39,9 @@ st.set_page_config(
 api_key = os.getenv("OPENAI_API_KEY")
 if api_key:
     resume_builder = ATSResumeBuilder(api_key)
+    game_generator = GameGenerator(api_key)
+    career_coach = CareerCoach(api_key)
+    interview_game = InterviewGame(api_key)
 else:
     st.error("⚠️ OpenAI API key not found. Please check your .env file.")
     st.stop()
@@ -71,6 +75,63 @@ st.markdown("""
         max-width: 400px;
         margin: auto;
     }
+</style>
+""", unsafe_allow_html=True)
+
+# Custom CSS for cards
+st.markdown("""
+<style>
+.game-card {
+    background-color: #2b2b2b;
+    border-radius: 10px;
+    padding: 20px;
+    margin: 10px 0;
+    border: 1px solid #3c3c3c;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    height: 200px;
+}
+
+.game-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+    background-color: #363636;
+    border-color: #4c4c4c;
+}
+
+.game-card h3 {
+    color: #ffffff;
+    font-size: 1.5em;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.game-card p {
+    color: #e0e0e0;
+    font-size: 0.9em;
+    margin-bottom: 15px;
+    line-height: 1.6;
+}
+
+.mode-icon {
+    font-size: 2em;
+    margin-bottom: 15px;
+    color: #ffffff;
+}
+
+.start-button {
+    background-color: #4CAF50;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.start-button:hover {
+    background-color: #45a049;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1473,7 +1534,7 @@ elif selected_page == "Career Coach":
         st.subheader("🌟 Daily Motivation")
         if st.button("Get Today's Motivation"):
             with st.spinner("Generating your daily motivation..."):
-                motivation = CareerCoach.generate_daily_motivation(st.session_state.user_profile)
+                motivation = career_coach.generate_daily_motivation(st.session_state.user_profile)
                 if motivation:
                     st.info(motivation['message'])
                     col1, col2 = st.columns(2)
@@ -1488,7 +1549,7 @@ elif selected_page == "Career Coach":
         st.subheader("💪 Weekly Skill Challenge")
         if st.button("Get This Week's Challenge"):
             with st.spinner("Creating your weekly challenge..."):
-                challenge = CareerCoach.generate_weekly_challenge(st.session_state.user_profile)
+                challenge = career_coach.generate_weekly_challenge(st.session_state.user_profile)
                 if challenge:
                     st.success(f"**{challenge['challenge_name']}**")
                     st.write(challenge['description'])
@@ -1516,7 +1577,7 @@ elif selected_page == "Career Coach":
             }
             
             with st.spinner("Analyzing your monthly progress..."):
-                review = CareerCoach.generate_monthly_review(st.session_state.user_profile, monthly_data)
+                review = career_coach.generate_monthly_review(st.session_state.user_profile, monthly_data)
                 if review:
                     st.write("**Overall Summary:**", review['summary'])
                     
@@ -1544,7 +1605,7 @@ elif selected_page == "Career Coach":
         st.subheader("📋 Custom Action Plan")
         if st.button("Create Action Plan"):
             with st.spinner("Creating your personalized action plan..."):
-                plan = CareerCoach.generate_action_plan(
+                plan = career_coach.generate_action_plan(
                     st.session_state.user_profile,
                     st.session_state.user_profile['goals']
                 )
@@ -1582,7 +1643,7 @@ elif selected_page == "Career Coach":
             }
             
             with st.spinner("Analyzing your progress..."):
-                feedback = CareerCoach.generate_progress_feedback(st.session_state.user_profile, progress_data)
+                feedback = career_coach.generate_progress_feedback(st.session_state.user_profile, progress_data)
                 if feedback:
                     st.write("**Overall Assessment:**", feedback['overall_assessment'])
                     
@@ -1610,3 +1671,944 @@ elif selected_page == "Career Coach":
                     st.info(feedback['motivation'])
     else:
         st.info("👆 Please set up your profile to get started with your personal career coach!")
+
+elif selected_page == "Interview Game":
+    st.title("🎮 Interview Preparation Game")
+    st.write("Welcome to the fun and engaging way to prepare for your interviews!")
+    
+    # Initialize session state for game
+    if 'game_state' not in st.session_state:
+        st.session_state.game_state = {
+            'current_mode': None,
+            'current_question': 0,
+            'current_challenge': 0,
+            'score': 0,
+            'total_questions': 5,
+            'questions': None,
+            'scenario': None,
+            'debug': None,
+            'system_design': None,
+            'feedback': []
+        }
+    
+    # Interview game setup
+    st.write("### Setup Your Interview Practice")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        job_role = st.text_input("What's your target job role?", placeholder="e.g., Python Developer")
+    
+    with col2:
+        difficulty = st.selectbox(
+            "Choose difficulty level",
+            list(interview_game.get_difficulty_levels().keys()),
+            format_func=lambda x: interview_game.get_difficulty_levels()[x]
+        )
+    
+    with col3:
+        company = st.text_input(
+            "Target Company (Optional)",
+            placeholder="e.g., Google, Microsoft, etc.",
+            help="Enter a company name to get company-specific interview preparation"
+        )
+    
+    # Pass company info to game state
+    if job_role:
+        st.session_state.game_state = {
+            'current_mode': st.session_state.game_state.get('current_mode'),
+            'job_role': job_role,
+            'difficulty': difficulty,
+            'company': company if company.strip() else None
+        }
+    
+    # Game mode selection
+    st.write("### Choose Your Challenge Mode")
+    
+    # Define game modes with their details
+    game_modes = [
+        {
+            "mode": "quiz",
+            "title": "Quiz Mode",
+            "icon": "📝",
+            "description": "Test your knowledge with multiple-choice questions tailored to your job role and difficulty level."
+        },
+        {
+            "mode": "rapid_fire",
+            "title": "Rapid Fire",
+            "icon": "⚡",
+            "description": "Quick-paced questions to test your quick thinking and knowledge under time pressure."
+        },
+        {
+            "mode": "debug",
+            "title": "Debug Challenge",
+            "icon": "🔍",
+            "description": "Find and fix bugs in code snippets. Perfect for improving your debugging skills."
+        },
+        {
+            "mode": "system_design",
+            "title": "System Design",
+            "icon": "🏗️",
+            "description": "Design scalable systems and architectures. Great for senior roles and system design interviews."
+        },
+        {
+            "mode": "coding",
+            "title": "Code Challenge",
+            "icon": "💻",
+            "description": "Solve coding problems with our integrated code editor, test cases, and real-time feedback."
+        },
+        {
+            "mode": "scenario",
+            "title": "Scenario Challenge",
+            "icon": "📋",
+            "description": "Practice responding to real-world scenarios and behavioral interview questions."
+        },
+        {
+            "mode": "practice_websites",
+            "title": "Practice Websites",
+            "icon": "🌐",
+            "description": "Discover curated websites and platforms to enhance your skills through hands-on practice."
+        }
+    ]
+
+    # Create three columns for the game mode cards
+    cols = st.columns(3)
+    
+    # Display game modes in cards
+    for i, mode in enumerate(game_modes):
+        with cols[i % 3]:
+            st.markdown(f"""
+            <div class="game-card">
+                <div class="mode-icon">{mode['icon']}</div>
+                <h3>{mode['title']}</h3>
+                <p>{mode['description']}</p>
+                <button class="start-button" onclick="document.getElementById('{mode['mode']}_button').click()">Start Game</button>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Hidden button for handling clicks
+            if st.button("Start Game", key=f"{mode['mode']}_button", type="primary", use_container_width=True):
+                if job_role:
+                    st.session_state.game_state['current_mode'] = mode['mode']
+                    st.experimental_rerun()
+
+    # Handle practice websites mode
+    if st.session_state.game_state.get('current_mode') == "practice_websites":
+        websites_data = interview_game.get_practice_websites(st.session_state.game_state['job_role'])
+        
+        if websites_data["found"]:
+            st.write(f"### 🎯 Practice Websites for {websites_data['matched_role'].title()}")
+        else:
+            st.write(f"### 🎯 Recommended Resources for {st.session_state.game_state['job_role'].title()}")
+        
+        # Display all website categories
+        for category, sites in websites_data["websites"].items():
+            st.write(f"#### {category.replace('_', ' ').title()}")
+            
+            for site in sites:
+                with st.expander(f"{site['name']}"):
+                    st.write(f"**Description:** {site['description']}")
+                    st.markdown(f"**[Visit Website]({site['url']})**", unsafe_allow_html=True)
+            
+            st.write("")  # Add spacing between categories
+    
+    # Game interface based on mode
+    elif st.session_state.game_state['current_mode'] == "rapid":
+        # Initialize rapid fire if not already done
+        if 'questions' not in st.session_state.game_state:
+            with st.spinner("Generating rapid-fire questions..."):
+                st.session_state.game_state['questions'] = interview_game.generate_rapid_fire(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+                st.session_state.game_state['current_question'] = 0
+                st.session_state.game_state['score'] = 0
+                st.session_state.game_state['submitted'] = False
+        
+        if 'questions' in st.session_state.game_state and st.session_state.game_state['questions']:
+            current_q = st.session_state.game_state.get('current_question', 0)
+            questions = st.session_state.game_state['questions']
+            
+            # Show progress
+            st.progress(current_q / 10)
+            st.write(f"Question {current_q + 1} of 10")
+            
+            if current_q < 10 and current_q < len(questions):
+                question = questions[current_q]
+                
+                # Display question
+                st.write("### " + question['question'])
+                
+                # Display timer
+                time_limit = question.get('time_limit', 30)
+                st.write(f"⏱️ Time Limit: {time_limit} seconds")
+                
+                # Answer input
+                user_answer = st.text_input(
+                    "Your Answer:",
+                    key=f"rapid_q_{current_q}",
+                    help=f"You have {time_limit} seconds to answer"
+                )
+                
+                if not st.session_state.game_state.get('submitted', False):
+                    if st.button("Submit Answer", key=f"submit_{current_q}"):
+                        st.session_state.game_state['submitted'] = True
+                        
+                        # Check answer
+                        result = interview_game.check_rapid_fire_answer(question, user_answer)
+                        
+                        if result:
+                            if result['correct']:
+                                st.success("🎯 Correct!")
+                                st.session_state.game_state['score'] += result['score']
+                            else:
+                                st.error("❌ Not quite right")
+                            
+                            st.write(f"**Score:** {result['score']:.1f}/100")
+                            
+                            # Always show the correct answer first
+                            st.write(f"**Correct Answer:** {result['correct_answer']}")
+                            
+                            # Then show explanation
+                            st.write(f"**Explanation:** {result['explanation']}")
+                            
+                            # Show what was missing if applicable
+                            if result['missing'] and result['missing'].lower() not in ['none', 'n/a', '']:
+                                st.write(f"**What was missing:** {result['missing']}")
+                
+                # Next question button (only show after submitting)
+                if st.session_state.game_state.get('submitted', False):
+                    if st.button("Next Question", key=f"next_{current_q}"):
+                        st.session_state.game_state['current_question'] += 1
+                        st.session_state.game_state['submitted'] = False
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+            
+            else:
+                # All questions completed
+                final_score = st.session_state.game_state['score'] / 10
+                st.success("🎉 Rapid Fire Round Completed!")
+                st.balloons()
+                st.write(f"### Final Score: {final_score:.1f}/100")
+                
+                # Display performance message
+                if final_score >= 90:
+                    st.write("🏆 Outstanding! Your rapid-fire skills are exceptional!")
+                elif final_score >= 70:
+                    st.write("🌟 Great job! You have solid quick-thinking abilities!")
+                elif final_score >= 50:
+                    st.write("👍 Good effort! Keep practicing to improve your speed and accuracy.")
+                else:
+                    st.write("📚 Keep learning! Focus on quick recall of core concepts.")
+                
+                if st.button("Try Another Round"):
+                    st.session_state.game_state['questions'] = None
+                    st.session_state.game_state['current_question'] = 0
+                    st.session_state.game_state['score'] = 0
+                    st.session_state.game_state['submitted'] = False
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+    
+    elif st.session_state.game_state['current_mode'] == "quiz":
+        if 'questions' not in st.session_state.game_state:
+            with st.spinner("Generating quiz questions..."):
+                st.session_state.game_state['questions'] = interview_game.generate_quiz_questions(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+                st.session_state.game_state['current_question'] = 0
+                st.session_state.game_state['score'] = 0
+                st.session_state.game_state['total_questions'] = 5
+                st.session_state.game_state['submitted'] = False
+
+        if st.session_state.game_state['questions']:
+            current_q = st.session_state.game_state['current_question']
+            
+            # Show progress
+            st.progress((current_q) / 5)
+            st.write(f"Question {current_q + 1} of 5")
+            
+            if current_q < 5:
+                question = st.session_state.game_state['questions'][current_q]
+                
+                st.write(f"### Question {current_q + 1}")
+                st.write(question['question'])
+                
+                # Display options
+                selected_option = st.radio(
+                    "Choose your answer:",
+                    question['options'],
+                    key=f"quiz_q_{current_q}"
+                )
+                
+                # Submit button
+                if not st.session_state.game_state.get('submitted', False):
+                    if st.button("Submit Answer", key=f"submit_{current_q}"):
+                        st.session_state.game_state['submitted'] = True
+                        
+                        if selected_option == question['correct_answer']:
+                            st.success("🎉 Correct!")
+                            st.session_state.game_state['score'] += 1
+                        else:
+                            st.error("❌ Incorrect!")
+                            st.write(f"The correct answer was: {question['correct_answer']}")
+                        
+                        st.write(f"**Explanation:** {question['explanation']}")
+                        st.write(f"**Fun Fact:** {question['fun_fact']}")
+                
+                # Next question button (only show after submitting)
+                if st.session_state.game_state.get('submitted', False):
+                    if st.button("Next Question", key=f"next_{current_q}"):
+                        st.session_state.game_state['current_question'] += 1
+                        st.session_state.game_state['submitted'] = False
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+            
+            # Show final score after all questions
+            if current_q >= 5:
+                score_percentage = (st.session_state.game_state['score'] / 5) * 100
+                st.success("🎉 Quiz Completed!")
+                st.balloons()
+                st.write(f"### Your Score: {score_percentage:.1f}%")
+                
+                # Display performance message
+                if score_percentage >= 90:
+                    st.write("🏆 Outstanding! You're more than ready for your interview!")
+                elif score_percentage >= 70:
+                    st.write("🌟 Great job! Just a bit more practice and you'll be perfect!")
+                elif score_percentage >= 50:
+                    st.write("👍 Good effort! Keep practicing to improve your knowledge.")
+                else:
+                    st.write("📚 Keep learning! Review the concepts and try again.")
+                
+                if st.button("Play Again"):
+                    # Reset game state
+                    st.session_state.game_state = {
+                        'current_mode': None,
+                        'job_role': st.session_state.game_state['job_role'],
+                        'difficulty': st.session_state.game_state['difficulty']
+                    }
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+    
+    elif st.session_state.game_state['current_mode'] == "coding":
+        st.write("💻 Coding Challenge")
+        
+        # Initialize coding challenge if not already done
+        if 'challenge' not in st.session_state.game_state:
+            with st.spinner("Generating coding challenge..."):
+                st.session_state.game_state['challenge'] = interview_game.generate_coding_challenge(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+        
+        challenge = st.session_state.game_state.get('challenge')
+        if challenge:
+            # Display challenge details
+            st.write("### 📝 Problem Description")
+            st.write(challenge['description'])
+            
+            # Create tabs for different sections
+            info_tab, editor_tab, results_tab = st.tabs(["Problem Info", "Code Editor", "Results"])
+            
+            with info_tab:
+                st.write("#### Input Format")
+                st.info(challenge['input_format'])
+                
+                st.write("#### Output Format")
+                st.info(challenge['output_format'])
+                
+                st.write("#### Constraints")
+                for constraint in challenge['constraints']:
+                    st.write(f"• {constraint}")
+                
+                st.write("#### Example Test Cases")
+                for i, case in enumerate(challenge['example_cases'], 1):
+                    with st.expander(f"Test Case {i}"):
+                        st.write("Input:")
+                        st.code(case['input'])
+                        st.write("Expected Output:")
+                        st.code(case['output'])
+            
+            with editor_tab:
+                # Code editor section
+                if 'current_code' not in st.session_state.game_state:
+                    st.session_state.game_state['current_code'] = challenge['function_template']
+                
+                st.write("### 👨‍💻 Code Editor")
+                
+                # Add language selector
+                language = st.selectbox(
+                    "Select Language",
+                    ["python", "javascript", "java", "cpp"],
+                    key="code_language"
+                )
+                
+                # Code editor with syntax highlighting
+                user_code = st.text_area(
+                    "Write your code here:",
+                    value=st.session_state.game_state['current_code'],
+                    height=300,
+                    key="code_editor"
+                )
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("Run Code"):
+                        st.session_state.game_state['current_code'] = user_code
+                        st.session_state.game_state['last_run'] = interview_game.evaluate_code_solution(
+                            challenge, user_code, language
+                        )
+                
+                with col2:
+                    if st.button("Reset Code"):
+                        st.session_state.game_state['current_code'] = challenge['function_template']
+                        st.experimental_rerun()
+            
+            with results_tab:
+                if 'last_run' in st.session_state.game_state:
+                    results = st.session_state.game_state['last_run']
+                    
+                    # Display test results
+                    st.write("### 🎯 Test Results")
+                    st.write(f"Passed: {results['passed']}/{results['total']} tests")
+                    
+                    # Display each test case result
+                    for i, test in enumerate(results['test_results'], 1):
+                        with st.expander(f"Test Case {i} - {'✅ Passed' if test['passed'] else '❌ Failed'}"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write("Input:")
+                                st.code(test['input'])
+                                st.write("Expected Output:")
+                                st.code(test['expected'])
+                            with col2:
+                                st.write("Your Output:")
+                                st.code(test['actual'])
+                                st.write(f"Execution Time: {test['execution_time']:.3f}s")
+                    
+                    # Display errors if any
+                    if results['errors']:
+                        st.write("### ❌ Errors")
+                        for error in results['errors']:
+                            st.error(error)
+                    
+                    # Display style issues
+                    if results['style_issues']:
+                        st.write("### 🎨 Style Issues")
+                        for issue in results['style_issues']:
+                            st.warning(issue)
+                    
+                    # Display optimization tips
+                    if results['optimization_tips']:
+                        st.write("### 🚀 Optimization Tips")
+                        for tip in results['optimization_tips']:
+                            st.info(tip)
+                    
+                    # Show sample solution button
+                    if results['passed'] == results['total']:
+                        st.success("🎉 Congratulations! All test cases passed!")
+                        if st.button("View Sample Solution"):
+                            st.write("### ✨ Sample Solution")
+                            st.code(challenge['sample_solution'])
+    
+    elif st.session_state.game_state['current_mode'] == "scenario":
+        # Initialize scenario if not already done
+        if 'scenario' not in st.session_state.game_state:
+            with st.spinner("Generating scenario challenge..."):
+                st.session_state.game_state['scenario'] = interview_game.generate_scenario_challenge(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+        
+        scenario = st.session_state.game_state['scenario']
+        if scenario:
+            # Display scenario description
+            st.write("### 🌟 Real-world Scenario")
+            st.info(scenario['scenario'])
+            
+            # Display requirements
+            if 'requirements' in scenario:
+                st.write("### 📋 Requirements")
+                for i, req in enumerate(scenario['requirements'], 1):
+                    st.write(f"{i}. {req}")
+            
+            # Display constraints
+            if 'constraints' in scenario:
+                st.write("### ⚠️ Constraints")
+                for i, con in enumerate(scenario['constraints'], 1):
+                    st.write(f"{i}. {con}")
+            
+            # Display evaluation criteria
+            if 'evaluation_criteria' in scenario:
+                with st.expander("📊 Evaluation Criteria"):
+                    for i, crit in enumerate(scenario['evaluation_criteria'], 1):
+                        st.write(f"{i}. {crit}")
+            
+            # Display time limit
+            if 'time_limit' in scenario:
+                st.info(f"⏱️ Time Limit: {scenario['time_limit']} minutes")
+            
+            # Solution input area
+            st.write("### Your Solution")
+            user_solution = st.text_area(
+                "Enter your solution:",
+                height=300,
+                key=f"scenario_solution"
+            )
+            
+            # Submit button
+            if st.button("Submit Solution"):
+                if user_solution.strip():
+                    with st.spinner("Evaluating your solution..."):
+                        result = interview_game.evaluate_scenario_solution(scenario, user_solution)
+                        
+                        if result:
+                            # Display score and feedback
+                            score = float(result.get('score', 0))
+                            if score >= 80:
+                                st.success(f"🌟 Excellent! Score: {score}/100")
+                            elif score >= 60:
+                                st.warning(f"👍 Good attempt! Score: {score}/100")
+                            else:
+                                st.error(f"Score: {score}/100")
+                            
+                            # Display detailed feedback
+                            st.write("### 📝 Feedback")
+                            st.write(result.get('feedback', ''))
+                            
+                            # Display strengths
+                            if 'strengths' in result:
+                                with st.expander("💪 Strengths"):
+                                    for strength in result['strengths']:
+                                        st.write(f"• {strength}")
+                            
+                            # Display areas for improvement
+                            if 'improvements' in result:
+                                with st.expander("🎯 Areas for Improvement"):
+                                    for improvement in result['improvements']:
+                                        st.write(f"• {improvement}")
+                            
+                            # Display sample solution after submission
+                            if 'sample_solution' in scenario:
+                                with st.expander("✨ Sample Solution"):
+                                    st.write(scenario['sample_solution'])
+                else:
+                    st.error("Please provide a solution before submitting.")
+            
+            # Show restart button after submission
+            if st.session_state.game_state.get('submitted', False):
+                if st.button("Try Another Scenario"):
+                    st.session_state.game_state['scenario'] = None
+                    st.session_state.game_state['submitted'] = False
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+    
+    elif st.session_state.game_state['current_mode'] == "debug":
+        # Initialize debug challenges if not already done
+        if 'debug' not in st.session_state.game_state:
+            with st.spinner("Generating debug challenges..."):
+                debug_data = interview_game.generate_debug_challenges(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+                if debug_data:
+                    st.session_state.game_state['debug'] = debug_data
+                    st.session_state.game_state['current_challenge'] = 0
+                    st.session_state.game_state['score'] = 0
+                    st.session_state.game_state['submitted'] = False
+                else:
+                    st.error("Failed to generate debug challenges. Please try again.")
+                    st.session_state.game_state['current_mode'] = None
+        
+        if 'debug' in st.session_state.game_state and st.session_state.game_state['debug']:
+            current_c = st.session_state.game_state.get('current_challenge', 0)
+            challenges = st.session_state.game_state['debug']
+            
+            # Show progress
+            st.progress((current_c) / 5)
+            st.write(f"Challenge {current_c + 1} of 5")
+            
+            if current_c < 5 and current_c < len(challenges):
+                challenge = challenges[current_c]
+                
+                # Display challenge
+                st.write("### 🐛 Debug Challenge")
+                st.info(challenge['description'])
+                
+                # Display buggy code
+                st.code(challenge['buggy_code'], language='python')
+                
+                # Display hints in expander
+                with st.expander("🔍 Hints"):
+                    for hint in challenge['hints']:
+                        st.write(f"- {hint}")
+                
+                # Solution input
+                user_solution = st.text_area(
+                    "Enter your corrected code:",
+                    height=200,
+                    key=f"debug_solution_{current_c}"
+                )
+                
+                # Submit button
+                if not st.session_state.game_state.get('submitted', False):
+                    if st.button("Submit Fix", key=f"submit_debug_{current_c}"):
+                        st.session_state.game_state['submitted'] = True
+                        
+                        # Evaluate solution
+                        result = interview_game.evaluate_debug_solution(challenge, user_solution)
+                        
+                        if result:
+                            # Display score and correctness
+                            score = float(result['score'])
+                            if result['is_correct']:
+                                st.success(f"🎯 Great Job! Score: {score}/100")
+                            else:
+                                st.warning(f"Almost there! Score: {score}/100")
+                            
+                            st.session_state.game_state['score'] += score
+                            
+                            # Display feedback
+                            st.write("### Feedback")
+                            st.write(result['feedback'])
+                            
+                            # Show the user's solution with syntax highlighting
+                            st.write("**Your Solution:**")
+                            st.code(user_solution, language='python')
+                            
+                            # Show correct solution if available
+                            if result.get('solution'):
+                                with st.expander("✨ View Solution"):
+                                    st.code(result['solution'], language='python')
+                                    if result.get('explanation'):
+                                        st.write("**Explanation:**")
+                                        st.write(result['explanation'])
+                            
+                            # Show best practices
+                            with st.expander("📚 Best Practices"):
+                                for practice in result['best_practices']:
+                                    st.write(f"- {practice}")
+                
+                # Next challenge button (only show after submitting)
+                if st.session_state.game_state.get('submitted', False):
+                    if st.button("Next Challenge", key=f"next_debug_{current_c}"):
+                        st.session_state.game_state['current_challenge'] += 1
+                        st.session_state.game_state['submitted'] = False
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+            
+            else:
+                # All challenges completed
+                st.success("🎉 Congratulations! You've completed all debug challenges!")
+                final_score = st.session_state.game_state['score'] / 5  # Average score
+                st.write(f"Final Score: {final_score:.2f}/100")
+                
+                # Display performance message
+                if final_score >= 90:
+                    st.write("🏆 Outstanding! You show excellent debugging skills!")
+                elif final_score >= 70:
+                    st.write("🌟 Great job! You have a solid grasp of debugging principles!")
+                elif final_score >= 50:
+                    st.write("👍 Good effort! Keep practicing your debugging skills.")
+                else:
+                    st.write("📚 Keep learning! Focus on understanding error handling and code optimization.")
+                
+                if st.button("Play Again"):
+                    # Reset game state
+                    st.session_state.game_state = {
+                        'current_mode': None,
+                        'job_role': st.session_state.game_state['job_role'],
+                        'difficulty': st.session_state.game_state['difficulty']
+                    }
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+    
+    elif st.session_state.game_state['current_mode'] == "system_design":
+        if 'challenge' not in st.session_state.game_state:
+            with st.spinner("Generating system design challenge..."):
+                st.session_state.game_state['challenge'] = interview_game.generate_system_design_challenge(
+                    job_role=st.session_state.game_state['job_role'],
+                    difficulty=st.session_state.game_state['difficulty']
+                )
+
+        if st.session_state.game_state['challenge']:
+            challenge = st.session_state.game_state['challenge']
+            
+            # Display challenge
+            st.write("### 🏗️ System Design Challenge")
+            
+            # Display the challenge description
+            st.write("#### Problem Statement")
+            st.write(challenge['description'])
+            
+            # Display requirements
+            if 'requirements' in challenge:
+                st.write("#### 📋 Requirements")
+                for i, req in enumerate(challenge['requirements'], 1):
+                    st.write(f"{i}. {req}")
+            
+            # Display constraints
+            if 'constraints' in challenge:
+                st.write("#### 🔒 Constraints")
+                for i, con in enumerate(challenge['constraints'], 1):
+                    st.write(f"{i}. {con}")
+            
+            # Display evaluation criteria
+            if 'evaluation_criteria' in challenge:
+                with st.expander("📊 Evaluation Criteria"):
+                    for i, crit in enumerate(challenge['evaluation_criteria'], 1):
+                        st.write(f"{i}. {crit}")
+            
+            # Display time limit if specified
+            if 'time_limit' in challenge:
+                st.info(f"⏱️ Time Limit: {challenge['time_limit']} minutes")
+            
+            # Solution input area
+            st.write("### Your Solution")
+            user_solution = st.text_area(
+                "Describe your system design solution in detail. Consider all requirements and constraints.",
+                height=300
+            )
+            
+            # Submit button
+            if st.button("Submit Solution"):
+                if user_solution.strip():
+                    with st.spinner("Evaluating your solution..."):
+                        result = interview_game.evaluate_system_design_solution(challenge, user_solution)
+                        
+                        if result:
+                            # Display score and feedback
+                            score = float(result.get('score', 0))
+                            if score >= 80:
+                                st.success(f"🌟 Excellent! Score: {score}/100")
+                            elif score >= 60:
+                                st.warning(f"👍 Good attempt! Score: {score}/100")
+                            else:
+                                st.error(f"Score: {score}/100")
+                            
+                            # Display detailed feedback
+                            st.write("### 📝 Feedback")
+                            st.write(result.get('feedback', ''))
+                            
+                            # Display strengths
+                            if 'strengths' in result:
+                                with st.expander("💪 Strengths"):
+                                    for strength in result['strengths']:
+                                        st.write(f"• {strength}")
+                            
+                            # Display weaknesses
+                            with st.expander("🔍 Areas for Improvement"):
+                                for weakness in result['weaknesses']:
+                                    st.write(f"• {weakness}")
+                            
+                            # Display suggestions
+                            with st.expander("💡 Suggestions"):
+                                for suggestion in result['suggestions']:
+                                    st.write(f"• {suggestion}")
+                            
+                            # Try another button
+                            if st.button("Try Another Challenge"):
+                                st.session_state.game_state['challenge'] = interview_game.generate_system_design_challenge(
+                                    job_role=st.session_state.game_state['job_role'],
+                                    difficulty=st.session_state.game_state['difficulty']
+                                )
+                                st.cache_data.clear()
+                                st.cache_resource.clear()
+    
+    # Display game instructions if no mode selected
+    if not st.session_state.game_state['current_mode']:
+        st.write("### 🎮 Game Modes")
+        st.write("""
+        1. **Quick Quiz Challenge 🎯**
+           - Multiple choice questions
+           - Test your technical knowledge
+           - Fun facts with each question
+        
+        2. **Real-world Scenario Solver 🌟**
+           - Tackle realistic business scenarios
+           - Practice problem-solving
+           - Get detailed feedback
+        
+        3. **Rapid Fire Round ⚡**
+           - Quick-thinking challenges
+           - 30-second time limit per question
+           - Test your instant recall
+        
+        4. **Debug Challenge 🐛**
+           - Find and fix bugs
+           - Real code examples
+           - Learn best practices
+        
+        5. **System Design Adventure 🏗️**
+           - Design scalable systems
+           - Consider real-world constraints
+           - Get architecture feedback
+        """)
+        
+        st.info("👆 Enter your job role and select a difficulty level to start!")
+
+elif selected_page == "Learning Playlist":
+    st.title("Learning Playlist")
+    st.info("🚧 Coming Soon! This feature is under development.")
+
+elif selected_page == "Coding Challenge":
+    st.title("💻 Coding Challenge")
+    st.write("Welcome to the coding challenge feature!")
+    
+    # Initialize session state for coding challenge
+    if 'coding_challenge' not in st.session_state:
+        st.session_state.coding_challenge = {
+            'current_mode': None,
+            'job_role': None,
+            'difficulty': None,
+            'challenge': None,
+            'current_code': None,
+            'last_run': None
+        }
+    
+    # Coding challenge setup
+    col1, col2 = st.columns(2)
+    with col1:
+        job_role = st.text_input("What's your target job role?", placeholder="e.g., Python Developer")
+    with col2:
+        difficulty = st.selectbox(
+            "Choose difficulty level",
+            list(interview_game.get_difficulty_levels().keys()),
+            format_func=lambda x: interview_game.get_difficulty_levels()[x]
+        )
+    
+    # Coding challenge mode selection
+    st.write("### Choose Your Challenge Mode")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        if st.button("📝 Code Editor", use_container_width=True):
+            st.session_state.coding_challenge = {
+                'current_mode': "coding",
+                'job_role': job_role,
+                'difficulty': difficulty
+            }
+    
+    # Coding challenge interface based on mode
+    if st.session_state.coding_challenge['current_mode'] == "coding":
+        st.write("💻 Coding Challenge")
+        
+        # Initialize coding challenge if not already done
+        if 'challenge' not in st.session_state.coding_challenge:
+            with st.spinner("Generating coding challenge..."):
+                st.session_state.coding_challenge['challenge'] = interview_game.generate_coding_challenge(
+                    job_role=st.session_state.coding_challenge['job_role'],
+                    difficulty=st.session_state.coding_challenge['difficulty']
+                )
+        
+        challenge = st.session_state.coding_challenge.get('challenge')
+        if challenge:
+            # Display challenge details
+            st.write("### 📝 Problem Description")
+            st.write(challenge['description'])
+            
+            # Create tabs for different sections
+            info_tab, editor_tab, results_tab = st.tabs(["Problem Info", "Code Editor", "Results"])
+            
+            with info_tab:
+                st.write("#### Input Format")
+                st.info(challenge['input_format'])
+                
+                st.write("#### Output Format")
+                st.info(challenge['output_format'])
+                
+                st.write("#### Constraints")
+                for constraint in challenge['constraints']:
+                    st.write(f"• {constraint}")
+                
+                st.write("#### Example Test Cases")
+                for i, case in enumerate(challenge['example_cases'], 1):
+                    with st.expander(f"Test Case {i}"):
+                        st.write("Input:")
+                        st.code(case['input'])
+                        st.write("Expected Output:")
+                        st.code(case['output'])
+            
+            with editor_tab:
+                # Code editor section
+                if 'current_code' not in st.session_state.coding_challenge:
+                    st.session_state.coding_challenge['current_code'] = challenge['function_template']
+                
+                st.write("### 👨‍💻 Code Editor")
+                
+                # Add language selector
+                language = st.selectbox(
+                    "Select Language",
+                    ["python", "javascript", "java", "cpp"],
+                    key="code_language"
+                )
+                
+                # Code editor with syntax highlighting
+                user_code = st.text_area(
+                    "Write your code here:",
+                    value=st.session_state.coding_challenge['current_code'],
+                    height=300,
+                    key="code_editor"
+                )
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("Run Code"):
+                        st.session_state.coding_challenge['current_code'] = user_code
+                        st.session_state.coding_challenge['last_run'] = interview_game.evaluate_code_solution(
+                            challenge, user_code, language
+                        )
+                
+                with col2:
+                    if st.button("Reset Code"):
+                        st.session_state.coding_challenge['current_code'] = challenge['function_template']
+                        st.experimental_rerun()
+            
+            with results_tab:
+                if 'last_run' in st.session_state.coding_challenge:
+                    results = st.session_state.coding_challenge['last_run']
+                    
+                    # Display test results
+                    st.write("### 🎯 Test Results")
+                    st.write(f"Passed: {results['passed']}/{results['total']} tests")
+                    
+                    # Display each test case result
+                    for i, test in enumerate(results['test_results'], 1):
+                        with st.expander(f"Test Case {i} - {'✅ Passed' if test['passed'] else '❌ Failed'}"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write("Input:")
+                                st.code(test['input'])
+                                st.write("Expected Output:")
+                                st.code(test['expected'])
+                            with col2:
+                                st.write("Your Output:")
+                                st.code(test['actual'])
+                                st.write(f"Execution Time: {test['execution_time']:.3f}s")
+                    
+                    # Display errors if any
+                    if results['errors']:
+                        st.write("### ❌ Errors")
+                        for error in results['errors']:
+                            st.error(error)
+                    
+                    # Display style issues
+                    if results['style_issues']:
+                        st.write("### 🎨 Style Issues")
+                        for issue in results['style_issues']:
+                            st.warning(issue)
+                    
+                    # Display optimization tips
+                    if results['optimization_tips']:
+                        st.write("### 🚀 Optimization Tips")
+                        for tip in results['optimization_tips']:
+                            st.info(tip)
+                    
+                    # Show sample solution button
+                    if results['passed'] == results['total']:
+                        st.success("🎉 Congratulations! All test cases passed!")
+                        if st.button("View Sample Solution"):
+                            st.write("### ✨ Sample Solution")
+                            st.code(challenge['sample_solution'])
