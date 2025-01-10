@@ -49,8 +49,8 @@ An advanced AI-powered career development platform that helps users prepare for 
 
 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/future-you-predictor.git
-cd future-you-predictor
+git clone https://github.com/Shreyas-077/byteburst-codered25.git
+cd byteburst-codered25
 ```
 
 2. Create a virtual environment (recommended)
@@ -124,8 +124,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-Your Name - your.email@example.com
-Project Link: [https://github.com/yourusername/future-you-predictor](https://github.com/yourusername/future-you-predictor)
+
+Project Link: [https://github.com/Shreyas-077/byteburst-codered25.git]
 
 ## 🔄 Updates
 
